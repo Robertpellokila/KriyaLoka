@@ -94,7 +94,7 @@ Make sure you have installed:
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/KriyaLoka.git
+git clone https://github.com/Robertpellokila/KriyaLoka.git
 ```
 
 ### 2. Navigate to the Project
