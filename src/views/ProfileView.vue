@@ -39,7 +39,16 @@ import { useAuthStore } from "../stores/auth.js";
 import { supabase } from "../services/supabase.js";
 import AppToast from "@/components/ui/AppToast.vue";
 import AppModal from "@/components/ui/AppModal.vue";
-import ShippingProgress from "@/components/shipping/ShippingProgress.vue";
+import ProfileSidebar from "@/components/profile/ProfileSidebar.vue";
+import ProfileOverview from "@/components/profile/ProfileOverview.vue";
+import ProfileInformation from "@/components/profile/ProfileInformation.vue";
+import ProfileAddresses from "@/components/profile/ProfileAddresses.vue";
+import ProfileOrders from "@/components/profile/ProfileOrders.vue";
+import ProfileWishlist from "@/components/profile/ProfileWishlist.vue";
+import ProfileReviews from "@/components/profile/ProfileReviews.vue";
+import ProfileSettings from "@/components/profile/ProfileSettings.vue";
+
+import "@/components/profile/profile.css";
 // ==========================================
 // STORE & ROUTER
 // ==========================================
@@ -225,6 +234,104 @@ const activeOrderCount = computed(() => {
 const completedOrderCount = computed(() => {
   return orders.value.filter((order) => order.status === "completed").length;
 });
+
+// ==========================================
+// PROFILE SECTION COMPONENTS
+// ==========================================
+
+const sectionComponents = {
+  overview: ProfileOverview,
+  profile: ProfileInformation,
+  addresses: ProfileAddresses,
+  orders: ProfileOrders,
+  wishlist: ProfileWishlist,
+  reviews: ProfileReviews,
+  settings: ProfileSettings,
+};
+
+const activeSectionComponent = computed(() => {
+  return sectionComponents[activeSection.value] || ProfileOverview;
+});
+
+const activeSectionProps = computed(() => {
+  const commonProps = {
+    formatCurrency,
+    formatDate,
+    getOrderStatusLabel,
+    getOrderStatusClass,
+  };
+
+  switch (activeSection.value) {
+    case "overview":
+      return {
+        ...commonProps,
+        userName: userName.value,
+        userEmail: userEmail.value,
+        userProfile: userProfile.value,
+        totalOrder: totalOrder.value,
+        activeOrderCount: activeOrderCount.value,
+        completedOrderCount: completedOrderCount.value,
+        addresses: addresses.value,
+        orders: orders.value,
+      };
+
+    case "profile":
+      return {
+        profileForm,
+        userEmail: userEmail.value,
+        saving: saving.value,
+      };
+
+    case "addresses":
+      return {
+        addresses: addresses.value,
+        addressForm,
+        showAddressForm: showAddressForm.value,
+        editingAddressId: editingAddressId.value,
+        loadingAddresses: loadingAddresses.value,
+        saving: saving.value,
+      };
+
+    case "orders":
+      return {
+        orders: orders.value,
+        loadingOrders: loadingOrders.value,
+        selectedPaymentMethods,
+        selectingPayment: selectingPayment.value,
+        ...commonProps,
+        getSellerPayment,
+        getPaymentStatusLabel,
+        getPaymentStatusClass,
+        canSelectPaymentMethod,
+        getSelectedPaymentMethodId,
+        getPaymentMethodSnapshot,
+      };
+
+    default:
+      return {};
+  }
+});
+
+const activeSectionEvents = {
+  "change-section": changeSection,
+  "go-catalog": () => router.push("/katalog"),
+  "save-profile": saveProfile,
+
+  "open-add": openAddAddressForm,
+  "open-edit": openEditAddressForm,
+  "close-form": closeAddressForm,
+  "save-address": saveAddress,
+  "set-default": setDefaultAddress,
+  "delete-address": openDeleteAddressModal,
+
+  refresh: fetchOrders,
+  "select-payment": selectPaymentMethod,
+  "download-qris": downloadQris,
+  "copy-account-number": copyAccountNumber,
+  "open-payment-proof": openPaymentProofModal,
+
+  logout: handleLogout,
+};
 
 // ==========================================
 // GLOBAL APP TOAST
@@ -1332,57 +1439,16 @@ onMounted(() => {
       =================================== -->
 
       <Transition name="sidebar">
-        <aside
-          class="account-sidebar"
-          :class="{ 'mobile-open': mobileSidebarOpen }"
-        >
-          <div class="account-user-card">
-            <div class="user-avatar">
-              {{ userInitial }}
-            </div>
-
-            <div class="user-info">
-              <strong>{{ userName }}</strong>
-              <span>{{ userEmail }}</span>
-            </div>
-
-            <div class="buyer-badge">
-              <ShieldCheck :size="13" />
-              Buyer
-            </div>
-          </div>
-
-          <div class="sidebar-divider"></div>
-
-          <nav class="account-menu">
-            <button
-              v-for="item in menuItems"
-              :key="item.id"
-              class="menu-item"
-              :class="{
-                active: activeSection === item.id,
-              }"
-              @click="changeSection(item.id)"
-            >
-              <component :is="item.icon" :size="19" />
-
-              <span>{{ item.label }}</span>
-
-              <ChevronRight
-                v-if="activeSection === item.id"
-                class="menu-chevron"
-                :size="16"
-              />
-            </button>
-          </nav>
-
-          <div class="sidebar-divider"></div>
-
-          <button class="menu-item logout-button" @click="handleLogout">
-            <LogOut :size="19" />
-            <span>Keluar</span>
-          </button>
-        </aside>
+        <ProfileSidebar
+          :menu-items="menuItems"
+          :active-section="activeSection"
+          :user-name="userName"
+          :user-email="userEmail"
+          :user-initial="userInitial"
+          :mobile-open="mobileSidebarOpen"
+          @change-section="changeSection"
+          @logout="handleLogout"
+        />
       </Transition>
 
       <!-- ==================================
@@ -1402,1068 +1468,11 @@ onMounted(() => {
           </span>
         </div>
 
-        <!-- ==================================
-             OVERVIEW
-        =================================== -->
-
-        <section v-if="activeSection === 'overview'" class="section-content">
-          <div class="welcome-card">
-            <div>
-              <span>RUANG PERSONALMU</span>
-              <h3>Belanja kerajinan lokal dengan lebih mudah.</h3>
-              <p>
-                Pantau pesanan dan kelola informasi pengiriman dari satu tempat.
-              </p>
-
-              <button class="primary-button" @click="router.push('/katalog')">
-                Mulai Belanja
-                <ChevronRight :size="17" />
-              </button>
-            </div>
-
-            <div class="welcome-decoration">
-              <ShoppingBag :size="74" />
-            </div>
-          </div>
-
-          <div class="overview-stats">
-            <div class="stat-card">
-              <div class="stat-icon brown">
-                <Package :size="21" />
-              </div>
-
-              <div>
-                <span>Total Pesanan</span>
-                <strong>{{ totalOrder }}</strong>
-              </div>
-            </div>
-
-            <div class="stat-card">
-              <div class="stat-icon orange">
-                <Clock :size="21" />
-              </div>
-
-              <div>
-                <span>Pesanan Aktif</span>
-                <strong>{{ activeOrderCount }}</strong>
-              </div>
-            </div>
-
-            <div class="stat-card">
-              <div class="stat-icon green">
-                <Check :size="21" />
-              </div>
-
-              <div>
-                <span>Pesanan Selesai</span>
-                <strong>{{ completedOrderCount }}</strong>
-              </div>
-            </div>
-
-            <div class="stat-card">
-              <div class="stat-icon cream">
-                <MapPin :size="21" />
-              </div>
-
-              <div>
-                <span>Alamat Tersimpan</span>
-                <strong>{{ addresses.length }}</strong>
-              </div>
-            </div>
-          </div>
-
-          <div class="overview-grid">
-            <div class="panel-card">
-              <div class="panel-heading">
-                <div>
-                  <h3>Informasi Akun</h3>
-                  <p>Informasi dasar akunmu.</p>
-                </div>
-
-                <button class="text-button" @click="changeSection('profile')">
-                  Edit Profil
-                  <ChevronRight :size="15" />
-                </button>
-              </div>
-
-              <div class="information-list">
-                <div>
-                  <span>Nama Lengkap</span>
-                  <strong>{{ userName }}</strong>
-                </div>
-
-                <div>
-                  <span>Email</span>
-                  <strong>{{ userEmail }}</strong>
-                </div>
-
-                <div>
-                  <span>Nomor Telepon</span>
-                  <strong>
-                    {{ userProfile.phone_number || "Belum diisi" }}
-                  </strong>
-                </div>
-              </div>
-            </div>
-
-            <div class="panel-card">
-              <div class="panel-heading">
-                <div>
-                  <h3>Alamat Utama</h3>
-                  <p>Alamat pengiriman pilihanmu.</p>
-                </div>
-
-                <button class="text-button" @click="changeSection('addresses')">
-                  Lihat Semua
-                  <ChevronRight :size="15" />
-                </button>
-              </div>
-
-              <div
-                v-if="addresses.find((item) => item.is_default)"
-                class="default-address"
-              >
-                <strong>
-                  {{ addresses.find((item) => item.is_default).label }}
-                </strong>
-
-                <p>
-                  {{ addresses.find((item) => item.is_default).recipient_name }}
-                </p>
-
-                <p>
-                  {{ addresses.find((item) => item.is_default).address_line }}
-                </p>
-
-                <small>
-                  {{ addresses.find((item) => item.is_default).district }},
-                  {{ addresses.find((item) => item.is_default).city }},
-                  {{ addresses.find((item) => item.is_default).province }}
-                </small>
-              </div>
-
-              <div v-else class="empty-mini">
-                <MapPin :size="27" />
-                <p>Belum ada alamat utama.</p>
-
-                <button class="text-button" @click="changeSection('addresses')">
-                  Tambahkan alamat
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div class="panel-card recent-orders">
-            <div class="panel-heading">
-              <div>
-                <h3>Pesanan Terbaru</h3>
-                <p>Aktivitas belanja terakhirmu.</p>
-              </div>
-
-              <button class="text-button" @click="changeSection('orders')">
-                Semua Pesanan
-                <ChevronRight :size="15" />
-              </button>
-            </div>
-
-            <div v-if="orders.length" class="table-wrapper">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Nomor Pesanan</th>
-                    <th>Tanggal</th>
-                    <th>Total</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  <tr v-for="order in orders.slice(0, 5)" :key="order.id">
-                    <td>{{ order.order_number }}</td>
-                    <td>{{ formatDate(order.created_at) }}</td>
-                    <td>{{ formatCurrency(order.grand_total) }}</td>
-                    <td>
-                      <span
-                        class="status-badge"
-                        :class="getOrderStatusClass(order.status)"
-                      >
-                        {{ getOrderStatusLabel(order.status) }}
-                      </span>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-
-            <div v-else class="empty-state compact">
-              <Package :size="32" />
-              <p>Belum ada pesanan.</p>
-              <button class="text-button" @click="router.push('/katalog')">
-                Jelajahi produk
-              </button>
-            </div>
-          </div>
-        </section>
-
-        <!-- ==================================
-             PROFILE
-        =================================== -->
-
-        <section
-          v-else-if="activeSection === 'profile'"
-          class="section-content"
-        >
-          <div class="panel-card">
-            <div class="section-intro">
-              <div class="large-section-icon">
-                <UserRound :size="25" />
-              </div>
-
-              <div>
-                <h3>Informasi Pribadi</h3>
-                <p>Perbarui informasi yang digunakan pada akunmu.</p>
-              </div>
-            </div>
-
-            <form class="account-form" @submit.prevent="saveProfile">
-              <div class="form-grid">
-                <div class="form-field full">
-                  <label>Nama Lengkap</label>
-                  <input
-                    v-model="profileForm.full_name"
-                    type="text"
-                    placeholder="Masukkan nama lengkap"
-                    required
-                  />
-                </div>
-
-                <div class="form-field full">
-                  <label>Alamat Email</label>
-                  <input :value="userEmail" type="email" disabled />
-                  <small>
-                    Email akun tidak dapat diubah dari halaman ini.
-                  </small>
-                </div>
-
-                <div class="form-field full">
-                  <label>Nomor Telepon</label>
-                  <input
-                    v-model="profileForm.phone_number"
-                    type="tel"
-                    placeholder="Contoh: 081234567890"
-                  />
-                </div>
-              </div>
-
-              <div class="form-actions">
-                <button class="primary-button" type="submit" :disabled="saving">
-                  <Save :size="17" />
-                  {{ saving ? "Menyimpan..." : "Simpan Perubahan" }}
-                </button>
-              </div>
-            </form>
-          </div>
-        </section>
-
-        <!-- ==================================
-             ADDRESSES
-        =================================== -->
-
-        <section
-          v-else-if="activeSection === 'addresses'"
-          class="section-content"
-        >
-          <div class="section-toolbar">
-            <div>
-              <h3>Daftar Alamat</h3>
-              <p>Simpan beberapa alamat untuk memudahkan pengiriman.</p>
-            </div>
-
-            <button
-              class="primary-button"
-              @click="openAddAddressForm"
-              :disabled="showAddressForm"
-            >
-              <Plus :size="17" />
-              Tambah Alamat
-            </button>
-          </div>
-
-          <!-- Address Form -->
-
-          <div v-if="showAddressForm" class="panel-card address-form-card">
-            <div class="panel-heading">
-              <div>
-                <h3>
-                  {{ editingAddressId ? "Edit Alamat" : "Tambah Alamat Baru" }}
-                </h3>
-
-                <p>Isi informasi alamat pengiriman dengan lengkap.</p>
-              </div>
-
-              <button
-                class="close-form-button"
-                type="button"
-                @click="closeAddressForm"
-              >
-                <X :size="19" />
-              </button>
-            </div>
-
-            <form class="account-form" @submit.prevent="saveAddress">
-              <div class="form-grid">
-                <div class="form-field">
-                  <label>Label Alamat</label>
-
-                  <select v-model="addressForm.label">
-                    <option value="Rumah">Rumah</option>
-                    <option value="Kantor">Kantor</option>
-                    <option value="Lainnya">Lainnya</option>
-                  </select>
-                </div>
-
-                <div class="form-field">
-                  <label>Nama Penerima</label>
-
-                  <input
-                    v-model="addressForm.recipient_name"
-                    type="text"
-                    required
-                    placeholder="Nama penerima"
-                  />
-                </div>
-
-                <div class="form-field">
-                  <label>Nomor Telepon</label>
-
-                  <input
-                    v-model="addressForm.phone_number"
-                    type="tel"
-                    required
-                    placeholder="Nomor telepon penerima"
-                  />
-                </div>
-
-                <div class="form-field">
-                  <label>Provinsi</label>
-
-                  <input
-                    v-model="addressForm.province"
-                    type="text"
-                    required
-                    placeholder="Contoh: Bali"
-                  />
-                </div>
-
-                <div class="form-field">
-                  <label>Kota / Kabupaten</label>
-
-                  <input
-                    v-model="addressForm.city"
-                    type="text"
-                    required
-                    placeholder="Contoh: Denpasar"
-                  />
-                </div>
-
-                <div class="form-field">
-                  <label>Kecamatan</label>
-
-                  <input
-                    v-model="addressForm.district"
-                    type="text"
-                    required
-                    placeholder="Nama kecamatan"
-                  />
-                </div>
-
-                <div class="form-field">
-                  <label>Kode Pos</label>
-
-                  <input
-                    v-model="addressForm.postal_code"
-                    type="text"
-                    required
-                    placeholder="Kode pos"
-                  />
-                </div>
-
-                <div class="form-field full">
-                  <label>Alamat Lengkap</label>
-
-                  <textarea
-                    v-model="addressForm.address_line"
-                    rows="3"
-                    required
-                    placeholder="Nama jalan, nomor rumah, banjar, dan detail lainnya"
-                  ></textarea>
-                </div>
-
-                <div class="form-field full">
-                  <label>Catatan Alamat (Opsional)</label>
-
-                  <textarea
-                    v-model="addressForm.address_notes"
-                    rows="2"
-                    placeholder="Contoh: Rumah pagar hitam di sebelah minimarket"
-                  ></textarea>
-                </div>
-              </div>
-
-              <label class="default-checkbox">
-                <input v-model="addressForm.is_default" type="checkbox" />
-
-                <span> Jadikan alamat utama </span>
-              </label>
-
-              <div class="form-actions">
-                <button
-                  class="secondary-button"
-                  type="button"
-                  @click="closeAddressForm"
-                >
-                  Batal
-                </button>
-
-                <button class="primary-button" type="submit" :disabled="saving">
-                  <Save :size="17" />
-                  {{ saving ? "Menyimpan..." : "Simpan Alamat" }}
-                </button>
-              </div>
-            </form>
-          </div>
-
-          <!-- Address Loading -->
-
-          <div v-if="loadingAddresses" class="loading-inline">
-            <RefreshCw class="spin" :size="22" />
-            Memuat alamat...
-          </div>
-
-          <!-- Address List -->
-
-          <div v-else-if="addresses.length" class="address-grid">
-            <article
-              v-for="address in addresses"
-              :key="address.id"
-              class="address-card"
-              :class="{ 'is-default': address.is_default }"
-            >
-              <div class="address-card-header">
-                <div class="address-label">
-                  <MapPin :size="18" />
-                  <strong>{{ address.label }}</strong>
-                </div>
-
-                <span v-if="address.is_default" class="default-badge">
-                  <Check :size="13" />
-                  Utama
-                </span>
-              </div>
-
-              <div class="address-recipient">
-                <strong>{{ address.recipient_name }}</strong>
-                <span>{{ address.phone_number }}</span>
-              </div>
-
-              <p class="address-line">
-                {{ address.address_line }}
-              </p>
-
-              <p class="address-region">
-                {{ address.district }}, {{ address.city }},
-                {{ address.province }},
-                {{ address.postal_code }}
-              </p>
-
-              <p v-if="address.address_notes" class="address-notes">
-                Catatan: {{ address.address_notes }}
-              </p>
-
-              <div class="address-actions">
-                <button
-                  class="small-action"
-                  @click="openEditAddressForm(address)"
-                >
-                  <Pencil :size="14" />
-                  Edit
-                </button>
-
-                <button
-                  v-if="!address.is_default"
-                  class="small-action"
-                  @click="setDefaultAddress(address.id)"
-                >
-                  <Check :size="14" />
-                  Jadikan Utama
-                </button>
-
-                <button
-                  class="small-action danger"
-                  @click="openDeleteAddressModal(address)"
-                >
-                  <Trash2 :size="14" />
-                  Hapus
-                </button>
-              </div>
-            </article>
-          </div>
-
-          <div v-else class="empty-state">
-            <MapPin :size="42" />
-            <h3>Belum Ada Alamat</h3>
-            <p>
-              Tambahkan alamat pengiriman agar proses checkout menjadi lebih
-              mudah.
-            </p>
-
-            <button class="primary-button" @click="openAddAddressForm">
-              <Plus :size="17" />
-              Tambah Alamat Pertama
-            </button>
-          </div>
-        </section>
-
-        <!-- ==================================
-             ORDERS
-        =================================== -->
-
-        <section v-else-if="activeSection === 'orders'" class="section-content">
-          <div class="section-toolbar">
-            <div>
-              <h3>Riwayat Pesanan</h3>
-              <p>Semua transaksi belanjamu di KriyaLoka.</p>
-            </div>
-
-            <button
-              class="secondary-button"
-              @click="fetchOrders"
-              :disabled="loadingOrders"
-            >
-              <RefreshCw :size="16" :class="{ spin: loadingOrders }" />
-              Refresh
-            </button>
-          </div>
-
-          <div v-if="loadingOrders" class="loading-inline">
-            <RefreshCw class="spin" :size="22" />
-            Memuat pesanan...
-          </div>
-
-          <div v-else-if="orders.length" class="order-list">
-            <article v-for="order in orders" :key="order.id" class="order-card">
-              <div class="order-card-top">
-                <div class="order-number">
-                  <span>Nomor Pesanan</span>
-                  <strong>{{ order.order_number }}</strong>
-                  <small>{{ formatDate(order.created_at) }}</small>
-                </div>
-
-                <span
-                  class="status-badge"
-                  :class="getOrderStatusClass(order.status)"
-                >
-                  {{ getOrderStatusLabel(order.status) }}
-                </span>
-              </div>
-
-              <div
-                v-for="sellerOrder in order.seller_orders || []"
-                :key="sellerOrder.id"
-                class="seller-order-group"
-              >
-                <div class="seller-order-heading">
-                  <strong>{{ sellerOrder.seller_order_number }}</strong>
-                  <span
-                    class="status-badge"
-                    :class="getOrderStatusClass(sellerOrder.status)"
-                  >
-                    {{ getOrderStatusLabel(sellerOrder.status) }}
-                  </span>
-                </div>
-
-                <!-- SHIPPING PROGRESS -->
-                <ShippingProgress
-                  v-if="
-                    ['paid', 'processing', 'shipped', 'completed'].includes(
-                      sellerOrder.status,
-                    )
-                  "
-                  :status="sellerOrder.status"
-                  :courier-name="sellerOrder.courier_name"
-                  :courier-service="sellerOrder.courier_service"
-                  :tracking-number="sellerOrder.courier_tracking_number"
-                  :shipped-at="sellerOrder.shipped_at"
-                  :delivered-at="sellerOrder.delivered_at"
-                />
-
-                <div
-                  v-for="item in sellerOrder.order_items || []"
-                  :key="item.id"
-                  class="order-product"
-                >
-                  <img
-                    v-if="item.product_image_url"
-                    :src="item.product_image_url"
-                    :alt="item.product_name"
-                    class="order-product-image"
-                  />
-
-                  <div v-else class="order-product-placeholder">
-                    <Package :size="22" />
-                  </div>
-
-                  <div class="order-product-details">
-                    <strong>{{ item.product_name }}</strong>
-                    <span>{{
-                      item.product_category || "Produk KriyaLoka"
-                    }}</span>
-                    <small>
-                      {{ formatCurrency(item.unit_price) }}
-                      × {{ item.quantity }}
-                    </small>
-                  </div>
-
-                  <strong class="order-product-subtotal">
-                    {{ formatCurrency(item.subtotal) }}
-                  </strong>
-                </div>
-
-                <div class="seller-order-total">
-                  <span>Subtotal Penjual</span>
-                  <strong>{{ formatCurrency(sellerOrder.subtotal) }}</strong>
-                </div>
-
-                <!-- PAYMENT SECTION -->
-                <div
-                  v-if="sellerOrder.status !== 'awaiting_shipping_cost'"
-                  class="seller-payment-section"
-                >
-                  <div class="seller-payment-header">
-                    <h4>Pembayaran Seller</h4>
-
-                    <span
-                      class="payment-status-badge"
-                      :class="
-                        getPaymentStatusClass(
-                          getSellerPayment(sellerOrder)?.status,
-                        )
-                      "
-                    >
-                      {{
-                        getPaymentStatusLabel(
-                          getSellerPayment(sellerOrder)?.status,
-                        )
-                      }}
-                    </span>
-                  </div>
-
-                  <div class="seller-payment-summary">
-                    <div class="payment-summary-row">
-                      <span>Subtotal Produk</span>
-                      <strong>{{
-                        formatCurrency(sellerOrder.subtotal)
-                      }}</strong>
-                    </div>
-
-                    <div class="payment-summary-row">
-                      <span>Ongkos Kirim</span>
-                      <strong>{{
-                        formatCurrency(sellerOrder.shipping_cost)
-                      }}</strong>
-                    </div>
-
-                    <div class="payment-summary-row payment-total-row">
-                      <span>Total Pembayaran</span>
-                      <strong>{{
-                        formatCurrency(sellerOrder.total_amount)
-                      }}</strong>
-                    </div>
-                  </div>
-
-                  <!-- PILIH METODE PEMBAYARAN -->
-                  <div
-                    v-if="canSelectPaymentMethod(sellerOrder)"
-                    class="payment-method-selector"
-                  >
-                    <label :for="`payment-method-${sellerOrder.id}`">
-                      Pilih Metode Pembayaran
-                    </label>
-
-                    <select
-                      :id="`payment-method-${sellerOrder.id}`"
-                      v-model="selectedPaymentMethods[sellerOrder.id]"
-                      class="payment-method-select"
-                    >
-                      <option value="" disabled>Pilih metode pembayaran</option>
-
-                      <option
-                        v-for="method in sellerOrder.paymentMethods || []"
-                        :key="method.id"
-                        :value="method.id"
-                      >
-                        {{ method.display_name }}
-                      </option>
-                    </select>
-
-                    <p
-                      v-if="!sellerOrder.paymentMethods?.length"
-                      class="payment-empty-message"
-                    >
-                      Seller belum menyediakan metode pembayaran aktif.
-                    </p>
-
-                    <button
-                      v-else
-                      type="button"
-                      class="payment-action-button"
-                      :disabled="
-                        !getSelectedPaymentMethodId(sellerOrder) ||
-                        selectingPayment
-                      "
-                      @click="
-                        selectPaymentMethod(
-                          sellerOrder,
-                          getSelectedPaymentMethodId(sellerOrder),
-                        )
-                      "
-                    >
-                      {{
-                        selectingPayment
-                          ? "Memproses..."
-                          : getSellerPayment(sellerOrder)
-                            ? "Perbarui Metode Pembayaran"
-                            : "Pilih Metode Pembayaran"
-                      }}
-                    </button>
-                  </div>
-
-                  <!-- DETAIL METODE PEMBAYARAN -->
-                  <div
-                    v-if="getSellerPayment(sellerOrder)"
-                    class="payment-method-detail"
-                  >
-                    <h5>Instruksi Pembayaran</h5>
-
-                    <template
-                      v-if="
-                        getPaymentMethodSnapshot(sellerOrder).method_type ===
-                        'qris'
-                      "
-                    >
-                      <p>
-                        Silakan scan QRIS berikut untuk melakukan pembayaran.
-                      </p>
-
-                      <div
-                        v-if="
-                          getPaymentMethodSnapshot(sellerOrder).qris_image_url
-                        "
-                        class="payment-qris-wrapper"
-                      >
-                        <img
-                          :src="
-                            getPaymentMethodSnapshot(sellerOrder).qris_image_url
-                          "
-                          alt="QRIS Seller"
-                          class="payment-qris-image"
-                        />
-
-                        <button
-                          type="button"
-                          class="payment-secondary-button"
-                          @click="downloadQris(sellerOrder)"
-                        >
-                          <Download :size="16" />
-                          Unduh QRIS
-                        </button>
-                      </div>
-                    </template>
-
-                    <template
-                      v-else-if="
-                        getPaymentMethodSnapshot(sellerOrder).method_type ===
-                        'bank_transfer'
-                      "
-                    >
-                      <div class="payment-bank-info">
-                        <div>
-                          <span>Bank</span>
-                          <strong>
-                            {{
-                              getPaymentMethodSnapshot(sellerOrder).bank_name
-                            }}
-                          </strong>
-                        </div>
-
-                        <div class="payment-account-number">
-                          <span>Nomor Rekening</span>
-
-                          <div class="payment-copy-row">
-                            <strong>
-                              {{
-                                getPaymentMethodSnapshot(sellerOrder)
-                                  .account_number
-                              }}
-                            </strong>
-
-                            <button
-                              type="button"
-                              class="payment-copy-button"
-                              title="Salin nomor rekening"
-                              aria-label="Salin nomor rekening"
-                              @click="copyAccountNumber(sellerOrder)"
-                            >
-                              <Copy :size="16" />
-                            </button>
-                          </div>
-                        </div>
-
-                        <div>
-                          <span>Nama Pemilik Rekening</span>
-                          <strong>
-                            {{
-                              getPaymentMethodSnapshot(sellerOrder)
-                                .account_holder
-                            }}
-                          </strong>
-                        </div>
-                      </div>
-                    </template>
-
-                    <p class="payment-instruction-note">
-                      Pastikan nominal transfer sesuai dengan total pembayaran
-                      pesanan ini.
-                    </p>
-
-                    <div
-                      v-if="
-                        ['pending', 'rejected'].includes(
-                          getSellerPayment(sellerOrder)?.status,
-                        )
-                      "
-                      class="payment-proof-action"
-                    >
-                      <button
-                        type="button"
-                        class="payment-proof-button"
-                        @click="openPaymentProofModal(sellerOrder)"
-                      >
-                        <Upload :size="17" />
-                        Upload Bukti Pembayaran
-                      </button>
-                    </div>
-                  </div>
-
-                  <!-- MENUNGGU VERIFIKASI -->
-                  <div
-                    v-if="
-                      getSellerPayment(sellerOrder)?.status ===
-                      'proof_submitted'
-                    "
-                    class="payment-info-message"
-                  >
-                    Bukti pembayaran sudah dikirim. Silakan tunggu seller
-                    melakukan verifikasi.
-                  </div>
-
-                  <!-- PEMBAYARAN BERHASIL -->
-                  <div
-                    v-if="getSellerPayment(sellerOrder)?.status === 'verified'"
-                    class="payment-success-message"
-                  >
-                    Pembayaran telah diverifikasi oleh seller.
-                  </div>
-
-                  <!-- BUKTI DITOLAK -->
-                  <div
-                    v-if="getSellerPayment(sellerOrder)?.status === 'rejected'"
-                    class="payment-rejected-message"
-                  >
-                    <strong>Bukti pembayaran ditolak.</strong>
-                    <p>
-                      {{
-                        getSellerPayment(sellerOrder)?.rejection_note ||
-                        "Silakan periksa kembali bukti pembayaran Anda."
-                      }}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div class="order-card-info">
-                <div>
-                  <span>Subtotal</span>
-                  <strong>{{ formatCurrency(order.subtotal) }}</strong>
-                </div>
-
-                <div>
-                  <span>Ongkos Kirim</span>
-                  <strong>
-                    {{ formatCurrency(order.shipping_cost) }}
-                  </strong>
-                </div>
-
-                <div>
-                  <span>Total Pembayaran</span>
-                  <strong class="order-total">
-                    {{ formatCurrency(order.grand_total) }}
-                  </strong>
-                </div>
-              </div>
-            </article>
-          </div>
-
-          <div v-else class="empty-state">
-            <Package :size="42" />
-            <h3>Belum Ada Pesanan</h3>
-            <p>Pesanan yang kamu buat akan muncul di halaman ini.</p>
-
-            <button class="primary-button" @click="router.push('/katalog')">
-              Mulai Belanja
-              <ChevronRight :size="17" />
-            </button>
-          </div>
-        </section>
-
-        <!-- ==================================
-             WISHLIST
-        =================================== -->
-
-        <section
-          v-else-if="activeSection === 'wishlist'"
-          class="section-content"
-        >
-          <div class="empty-state feature-placeholder">
-            <div class="placeholder-icon">
-              <Heart :size="35" />
-            </div>
-
-            <span class="coming-soon">SEGERA HADIR</span>
-
-            <h3>Wishlist Kamu</h3>
-
-            <p>
-              Simpan produk kerajinan favorit agar kamu bisa menemukannya
-              kembali dengan mudah.
-            </p>
-
-            <button class="primary-button" @click="router.push('/katalog')">
-              Jelajahi Produk
-              <ChevronRight :size="17" />
-            </button>
-          </div>
-        </section>
-
-        <!-- ==================================
-             REVIEWS
-        =================================== -->
-
-        <section
-          v-else-if="activeSection === 'reviews'"
-          class="section-content"
-        >
-          <div class="empty-state feature-placeholder">
-            <div class="placeholder-icon">
-              <Star :size="35" />
-            </div>
-
-            <span class="coming-soon">SEGERA HADIR</span>
-
-            <h3>Ulasan Saya</h3>
-
-            <p>Ulasan produk yang sudah kamu beli akan ditampilkan di sini.</p>
-
-            <button class="secondary-button" @click="changeSection('orders')">
-              Lihat Pesanan
-              <ChevronRight :size="17" />
-            </button>
-          </div>
-        </section>
-
-        <!-- ==================================
-             SETTINGS
-        =================================== -->
-
-        <section
-          v-else-if="activeSection === 'settings'"
-          class="section-content"
-        >
-          <div class="panel-card">
-            <div class="section-intro">
-              <div class="large-section-icon">
-                <Settings :size="25" />
-              </div>
-
-              <div>
-                <h3>Pengaturan Akun</h3>
-                <p>Kelola akses dan keamanan akunmu.</p>
-              </div>
-            </div>
-
-            <div class="settings-list">
-              <div class="setting-item">
-                <div class="setting-icon">
-                  <UserRound :size="20" />
-                </div>
-
-                <div>
-                  <strong>Informasi Profil</strong>
-                  <p>Perbarui nama dan nomor telepon.</p>
-                </div>
-
-                <button class="text-button" @click="changeSection('profile')">
-                  Kelola
-                  <ChevronRight :size="15" />
-                </button>
-              </div>
-
-              <div class="setting-item">
-                <div class="setting-icon">
-                  <MapPin :size="20" />
-                </div>
-
-                <div>
-                  <strong>Alamat Pengiriman</strong>
-                  <p>Kelola alamat yang tersimpan.</p>
-                </div>
-
-                <button class="text-button" @click="changeSection('addresses')">
-                  Kelola
-                  <ChevronRight :size="15" />
-                </button>
-              </div>
-
-              <div class="setting-item">
-                <div class="setting-icon">
-                  <ShieldCheck :size="20" />
-                </div>
-
-                <div>
-                  <strong>Keamanan Akun</strong>
-                  <p>
-                    Kata sandi dan keamanan login dikelola melalui autentikasi
-                    akun.
-                  </p>
-                </div>
-
-                <span class="setting-note"> Supabase Auth </span>
-              </div>
-            </div>
-          </div>
-
-          <div class="panel-card logout-panel">
-            <div>
-              <h3>Keluar dari Akun</h3>
-              <p>Kamu dapat login kembali kapan saja.</p>
-            </div>
-
-            <button class="danger-button" @click="handleLogout">
-              <LogOut :size="17" />
-              Keluar
-            </button>
-          </div>
-        </section>
+        <component
+          :is="activeSectionComponent"
+          v-bind="activeSectionProps"
+          v-on="activeSectionEvents"
+        />
       </main>
     </div>
   </div>

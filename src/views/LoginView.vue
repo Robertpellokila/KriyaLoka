@@ -67,26 +67,39 @@ const submitLogin = async () => {
 </script>
 
 <template>
-  <main class="auth-page">
-    <section class="auth-card">
-      <div class="auth-heading">
-        <span class="brand-label">KRIYALOKA</span>
-        <h1>Selamat Datang Kembali</h1>
-        <p>
-          Login untuk melanjutkan perjalananmu bersama produk dan pengrajin
-          lokal Bali.
-        </p>
-      </div>
+  <div class="auth-form-view login-view">
+    <div class="form-heading">
+      <span class="form-eyebrow">WELCOME BACK</span>
+      <h2>Senang melihatmu kembali.</h2>
+      <p>Masuk ke akunmu dan lanjutkan menemukan karya lokal favoritmu.</p>
+    </div>
 
-      <div v-if="errorMessage" class="alert alert-error">
-        {{ errorMessage }}
+    <Transition name="message">
+      <div v-if="errorMessage" class="auth-alert alert-error" role="alert">
+        <span class="alert-icon">!</span>
+        <span>{{ errorMessage }}</span>
       </div>
+    </Transition>
 
-      <form @submit.prevent="submitLogin">
-        <div class="form-group">
-          <label for="email">Alamat email</label>
+    <form class="auth-form" @submit.prevent="submitLogin">
+      <div class="form-group">
+        <label for="login-email">Alamat email</label>
+
+        <div class="input-wrapper">
+          <span class="input-icon">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.7"
+            >
+              <rect x="3" y="5" width="18" height="14" rx="3" />
+              <path d="m4 7 8 6 8-6" />
+            </svg>
+          </span>
+
           <input
-            id="email"
+            id="login-email"
             v-model="email"
             type="email"
             placeholder="nama@email.com"
@@ -94,192 +107,75 @@ const submitLogin = async () => {
             required
           />
         </div>
+      </div>
 
-        <div class="form-group">
-          <label for="password">Password</label>
+      <div class="form-group">
+        <label for="login-password">Password</label>
 
-          <div class="password-field">
-            <input
-              id="password"
-              v-model="password"
-              :type="showPassword ? 'text' : 'password'"
-              placeholder="Masukkan password"
-              autocomplete="current-password"
-              required
-            />
-
-            <button
-              type="button"
-              class="password-toggle"
-              @click="showPassword = !showPassword"
+        <div class="input-wrapper">
+          <span class="input-icon">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.7"
             >
-              {{ showPassword ? "Sembunyikan" : "Lihat" }}
-            </button>
-          </div>
+              <rect x="4" y="10" width="16" height="11" rx="3" />
+              <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+              <path d="M12 14v3" />
+            </svg>
+          </span>
+
+          <input
+            id="login-password"
+            v-model="password"
+            :type="showPassword ? 'text' : 'password'"
+            placeholder="Masukkan password"
+            autocomplete="current-password"
+            required
+          />
+
+          <button
+            type="button"
+            class="password-toggle"
+            @click="showPassword = !showPassword"
+          >
+            {{ showPassword ? "Sembunyikan" : "Lihat" }}
+          </button>
         </div>
+      </div>
 
-        <button class="submit-button" type="submit" :disabled="loading">
-          {{ loading ? "Memproses..." : "Login" }}
-        </button>
-      </form>
+      <button class="submit-button" type="submit" :disabled="loading">
+        <span v-if="!loading">Masuk ke Akun</span>
 
-      <p class="auth-footer">
-        Belum memiliki akun?
-        <RouterLink to="/register">Daftar sekarang</RouterLink>
-      </p>
+        <span v-else class="loading-content">
+          <span class="spinner"></span>
+          Memproses...
+        </span>
 
-      <RouterLink to="/" class="back-home"> ← Kembali ke beranda </RouterLink>
-    </section>
-  </main>
+        <span v-if="!loading" class="button-arrow">→</span>
+      </button>
+    </form>
+
+    <div class="auth-switch">
+      <span>Belum memiliki akun?</span>
+      <RouterLink to="/register">Buat akun sekarang</RouterLink>
+    </div>
+
+    <div class="form-divider">
+      <span></span>
+      <small>ATAU</small>
+      <span></span>
+    </div>
+
+    <RouterLink to="/" class="back-home">
+      <span>←</span>
+      Kembali ke beranda
+    </RouterLink>
+
+    <p class="form-bottom">
+      Dengan masuk, kamu dapat menjelajahi berbagai karya kreatif dari pengrajin
+      lokal.
+    </p>
+  </div>
 </template>
-
-<style scoped>
-.auth-page {
-  min-height: 80vh;
-  padding: 64px 20px;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  background: #fbf7f2;
-}
-
-.auth-card {
-  width: 100%;
-  max-width: 460px;
-  padding: 40px;
-  border: 1px solid #e6ddd3;
-  border-radius: 20px;
-  background: #fff;
-  box-shadow: 0 12px 40px rgba(70, 45, 25, 0.06);
-}
-
-.auth-heading {
-  margin-bottom: 30px;
-  text-align: center;
-}
-
-.brand-label {
-  color: #943c14;
-  font-size: 13px;
-  font-weight: 800;
-  letter-spacing: 3px;
-}
-
-.auth-heading h1 {
-  margin: 14px 0 10px;
-  color: #33251e;
-  font-size: 27px;
-}
-
-.auth-heading p {
-  color: #81746b;
-  font-size: 14px;
-  line-height: 1.7;
-}
-
-.form-group {
-  margin-bottom: 20px;
-}
-
-.form-group label {
-  display: block;
-  margin-bottom: 8px;
-  color: #45372e;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.form-group input {
-  width: 100%;
-  min-height: 47px;
-  padding: 12px 14px;
-  border: 1px solid #e6ddd3;
-  border-radius: 9px;
-  outline: none;
-  font: inherit;
-  font-size: 14px;
-}
-
-.form-group input:focus {
-  border-color: #943c14;
-  box-shadow: 0 0 0 3px rgba(148, 60, 20, 0.08);
-}
-
-.password-field {
-  position: relative;
-}
-
-.password-field input {
-  padding-right: 95px;
-}
-
-.password-toggle {
-  position: absolute;
-  top: 50%;
-  right: 12px;
-  transform: translateY(-50%);
-  border: 0;
-  background: transparent;
-  color: #943c14;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.submit-button {
-  width: 100%;
-  min-height: 48px;
-  margin-top: 8px;
-  border: 0;
-  border-radius: 9px;
-  background: #943c14;
-  color: white;
-  font-size: 14px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.submit-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.alert {
-  margin-bottom: 18px;
-  padding: 12px 14px;
-  border-radius: 8px;
-  font-size: 13px;
-}
-
-.alert-error {
-  background: #fff0ed;
-  color: #a33120;
-}
-
-.auth-footer {
-  margin-top: 24px;
-  color: #81746b;
-  font-size: 13px;
-  text-align: center;
-}
-
-.auth-footer a,
-.back-home {
-  color: #943c14;
-  font-weight: 700;
-  text-decoration: none;
-}
-
-.back-home {
-  display: block;
-  margin-top: 20px;
-  font-size: 13px;
-  text-align: center;
-}
-
-@media (max-width: 520px) {
-  .auth-card {
-    padding: 28px 20px;
-  }
-}
-</style>

@@ -19,6 +19,7 @@ import SellerProductsView from "../views/SellerProductsView.vue";
 
 import DashboardLayout from "../layouts/DashboardLayout.vue";
 import AdminLayout from "../layouts/AdminLayout.vue";
+import AuthLayout from "../layouts/AuthLayout.vue";
 
 import AdminDashboardView from "../views/admin/AdminDashboardView.vue";
 import AdminProductReviewView from "../views/admin/AdminProductReviewView.vue";
@@ -54,18 +55,28 @@ const routes = [
     name: "cart",
     component: CartView,
   },
+
   {
     path: "/login",
     name: "login",
     component: LoginView,
-    meta: { guestOnly: true },
+    meta: {
+      guestOnly: true,
+      hidePublicLayout: true,
+      authLayout: true,
+    },
   },
   {
     path: "/register",
     name: "register",
     component: RegisterView,
-    meta: { guestOnly: true },
+    meta: {
+      guestOnly: true,
+      hidePublicLayout: true,
+      authLayout: true,
+    },
   },
+
   {
     path: "/profil",
     name: "profile",
@@ -277,8 +288,11 @@ const routes = [
 
   {
     path: "/:pathMatch(.*)*",
-    name: "not-found",
-    component: NotFoundView,
+    name: "NotFound",
+    component: () => import("../views/NotFoundView.vue"),
+    meta: {
+      hidePublicLayout: true,
+    },
   },
 ];
 
