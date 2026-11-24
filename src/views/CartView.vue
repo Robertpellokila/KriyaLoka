@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from "vue";
+import { computed, onMounted, reactive } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 import {
   ShoppingBag,
@@ -13,16 +13,28 @@ import {
   PackageCheck,
   ArrowLeft,
 } from "lucide-vue-next";
+
 import { useCartStore } from "../stores/cart.js";
+import AppToast from "@/components/ui/AppToast.vue";
 
 const cartStore = useCartStore();
-const router = useRouter()
+const router = useRouter();
 
-const notification = ref("");
-const notificationType = ref("success");
-let notificationTimer;
+const toast = reactive({
+  visible: false,
+  type: "success",
+  title: "",
+  message: "",
+});
 
 const isEmpty = computed(() => cartStore.items.length === 0);
+
+function showToast(type, title, message) {
+  toast.type = type;
+  toast.title = title;
+  toast.message = message;
+  toast.visible = true;
+}
 
 const formatCurrency = (value) => {
   return new Intl.NumberFormat("id-ID", {
@@ -30,55 +42,98 @@ const formatCurrency = (value) => {
     currency: "IDR",
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
-  }).format(value);
+  }).format(Number(value || 0));
 };
 
-const showNotification = (message, type = "success") => {
-  notification.value = message;
-  notificationType.value = type;
+// Ambil keranjang dari Supabase ketika halaman dibuka
+async function loadCart() {
+  const result = await cartStore.fetchCart();
 
-  clearTimeout(notificationTimer);
-
-  notificationTimer = setTimeout(() => {
-    notification.value = "";
-  }, 3000);
-};
-
-const increaseQuantity = (item) => {
-  if (item.quantity >= item.stock) {
-    showNotification(
-      `Stok ${item.name} hanya tersedia ${item.stock} produk.`,
+  if (!result.success) {
+    showToast(
       "error",
+      "Gagal memuat keranjang",
+      result.message || "Silakan coba kembali.",
+    );
+  }
+}
+
+// Tambah jumlah produk
+async function increaseQuantity(item) {
+  if (item.quantity >= item.stock) {
+    showToast(
+      "error",
+      "Stok tidak mencukupi",
+      `Stok ${item.name} hanya tersedia ${item.stock} produk.`,
     );
     return;
   }
 
-  cartStore.updateQuantity(item.id, item.quantity + 1);
-};
+  const result = await cartStore.updateQuantity(item.id, item.quantity + 1);
 
-const decreaseQuantity = (item) => {
-  cartStore.updateQuantity(item.id, item.quantity - 1);
-};
+  if (!result.success) {
+    showToast("error", "Gagal memperbarui", result.message);
+  }
+}
 
-const removeItem = (item) => {
-  cartStore.removeItem(item.id);
-  showNotification(`${item.name} dihapus dari keranjang.`);
-};
+// Kurangi jumlah produk
+async function decreaseQuantity(item) {
+  if (item.quantity <= 1) return;
 
-const clearCart = () => {
-  cartStore.clearCart();
-  showNotification("Keranjang berhasil dikosongkan.");
-};
+  const result = await cartStore.updateQuantity(item.id, item.quantity - 1);
 
-const handleCheckout = () => {
-  if (cartStore.items.length === 0) return
+  if (!result.success) {
+    showToast("error", "Gagal memperbarui", result.message);
+  }
+}
 
-  router.push('/checkout')
-};
+// Hapus satu produk
+async function removeItem(item) {
+  const result = await cartStore.removeItem(item.id);
+
+  if (result.success) {
+    showToast(
+      "success",
+      "Produk dihapus",
+      `${item.name} berhasil dihapus dari keranjang.`,
+    );
+  } else {
+    showToast("error", "Gagal menghapus produk", result.message);
+  }
+}
+
+// Kosongkan keranjang
+async function clearCart() {
+  const result = await cartStore.clearCart();
+
+  if (result.success) {
+    showToast("success", "Keranjang dikosongkan", result.message);
+  } else {
+    showToast("error", "Gagal mengosongkan keranjang", result.message);
+  }
+}
+
+// Lanjut checkout
+function handleCheckout() {
+  if (cartStore.items.length === 0) return;
+
+  router.push("/checkout");
+}
+
+onMounted(() => {
+  loadCart();
+});
 </script>
 
 <template>
   <main class="cart-page">
+    <AppToast
+      v-model="toast.visible"
+      :type="toast.type"
+      :title="toast.title"
+      :message="toast.message"
+      :duration="3500"
+    />
     <div class="cart-container">
       <!-- Breadcrumb -->
       <div class="cart-breadcrumb">
@@ -113,7 +168,15 @@ const handleCheckout = () => {
       </Transition>
 
       <!-- Empty Cart -->
-      <section v-if="isEmpty" class="empty-cart">
+      <!-- Loading Cart -->
+      <section v-if="cartStore.loading" class="empty-cart">
+        <div class="loading-spinner"></div>
+        <h2>Memuat keranjang...</h2>
+        <p>Sedang mengambil produk pilihanmu.</p>
+      </section>
+
+      <!-- Empty Cart -->
+      <section v-else-if="isEmpty" class="empty-cart">
         <div class="empty-cart-icon">
           <ShoppingCart :size="42" :stroke-width="1.5" />
         </div>
@@ -132,7 +195,7 @@ const handleCheckout = () => {
       </section>
 
       <!-- Cart Content -->
-      <section v-else class="cart-layout">
+      <section v-else-if="!cartStore.loading" class="cart-layout">
         <!-- Product List -->
         <div class="cart-items-section">
           <div class="cart-list-header">
@@ -756,6 +819,22 @@ const handleCheckout = () => {
 
   .order-summary {
     padding: 20px;
+  }
+}
+
+.loading-spinner {
+  width: 36px;
+  height: 36px;
+  margin: 0 auto 18px;
+  border: 3px solid #e7ddcf;
+  border-top-color: #943c14;
+  border-radius: 50%;
+  animation: cart-spin 0.8s linear infinite;
+}
+
+@keyframes cart-spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 </style>

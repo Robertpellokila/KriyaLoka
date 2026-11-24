@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, reactive, ref, watch, onBeforeUnmount } from "vue";
 import {
   Store,
   MapPin,
@@ -7,6 +7,7 @@ import {
   Save,
   LoaderCircle,
   CheckCircle2,
+  AlertTriangle,
 } from "lucide-vue-next";
 import { useAuthStore } from "../stores/auth.js";
 import { useSellerStore } from "../stores/sellerStore.js";
@@ -47,9 +48,17 @@ const isPending = computed(
 
 const isActive = computed(() => authStore.profile?.account_status === "active");
 
-const isRestricted = computed(() =>
-  ["rejected", "suspended"].includes(authStore.profile?.account_status),
+const isRejected = computed(
+  () => authStore.profile?.account_status === "rejected",
 );
+
+const isSuspended = computed(
+  () => authStore.profile?.account_status === "suspended",
+);
+
+// Akun suspended tidak boleh mengubah profil.
+// Akun rejected tetap boleh memperbaiki pengajuan.
+const isRestricted = isSuspended;
 
 const isEditing = computed(() => sellerStore.hasStore);
 
@@ -63,6 +72,94 @@ const fillForm = (data) => {
   logoPreview.value = data.logo_url || "";
   bannerPreview.value = data.banner_url || "";
 };
+
+const applicationToast = ref({
+  visible: false,
+  type: "success",
+  message: "",
+});
+
+let applicationToastTimer = null;
+
+function showApplicationToast(message, type = "success") {
+  // Hentikan timer sebelumnya jika ada toast baru.
+  if (applicationToastTimer) {
+    window.clearTimeout(applicationToastTimer);
+  }
+
+  applicationToast.value = {
+    visible: true,
+    type,
+    message,
+  };
+
+  // Toast menghilang otomatis setelah 3,5 detik.
+  applicationToastTimer = window.setTimeout(() => {
+    applicationToast.value.visible = false;
+    applicationToastTimer = null;
+  }, 3500);
+}
+
+function closeApplicationToast() {
+  if (applicationToastTimer) {
+    window.clearTimeout(applicationToastTimer);
+    applicationToastTimer = null;
+  }
+
+  applicationToast.value.visible = false;
+}
+
+// Bersihkan timer ketika halaman ditinggalkan.
+onBeforeUnmount(() => {
+  if (applicationToastTimer) {
+    window.clearTimeout(applicationToastTimer);
+  }
+});
+
+async function resubmitApplication() {
+  if (sellerStore.saving) return;
+
+  // Pastikan profil toko sudah disimpan.
+  const store = sellerStore.profile;
+
+  if (
+    !store?.store_name?.trim() ||
+    !store?.category?.trim() ||
+    !store?.address?.trim()
+  ) {
+    showApplicationToast(
+      "Lengkapi dan simpan nama toko, kategori, serta alamat terlebih dahulu.",
+      "error",
+    );
+    return;
+  }
+
+  try {
+    const result = await sellerStore.resubmitApplication();
+
+    // Perbarui status lokal agar tampilan langsung berubah.
+    if (authStore.profile) {
+      authStore.profile.account_status = "pending";
+    }
+
+    if (sellerStore.profile) {
+      sellerStore.profile.verification_note = null;
+    }
+
+    showApplicationToast(
+      result?.message ||
+        "Pengajuan ulang berhasil dikirim. Silakan tunggu pemeriksaan admin.",
+      "success",
+    );
+  } catch (error) {
+    console.error("Gagal mengajukan ulang:", error);
+
+    showApplicationToast(
+      error.message || "Pengajuan ulang gagal. Silakan coba kembali.",
+      "error",
+    );
+  }
+}
 
 const loadStore = async () => {
   try {
@@ -168,6 +265,41 @@ onMounted(loadStore);
 
 <template>
   <section class="store-page">
+    <Transition name="toast">
+      <div
+        v-if="applicationToast.visible"
+        class="application-toast"
+        :class="`toast-${applicationToast.type}`"
+        role="status"
+      >
+        <div class="application-toast-icon">
+          <span v-if="applicationToast.type === 'success'">✓</span>
+          <span v-else>!</span>
+        </div>
+
+        <div class="application-toast-content">
+          <strong>
+            {{
+              applicationToast.type === "success"
+                ? "Berhasil"
+                : "Perlu diperiksa"
+            }}
+          </strong>
+
+          <p>{{ applicationToast.message }}</p>
+        </div>
+
+        <button
+          type="button"
+          class="application-toast-close"
+          aria-label="Tutup notifikasi"
+          @click="closeApplicationToast"
+        >
+          ×
+        </button>
+      </div>
+    </Transition>
+
     <div class="page-heading">
       <div>
         <span class="eyebrow">SELLER CENTER</span>
@@ -210,6 +342,40 @@ onMounted(loadStore);
         </p>
       </div>
     </div>
+    <div
+      v-if="isRejected && sellerStore.profile?.verification_note"
+      class="rejection-notice"
+    >
+      <div class="rejection-notice-icon">
+        <AlertTriangle :size="22" />
+      </div>
+
+      <div class="rejection-notice-content">
+        <strong>Pengajuan toko belum disetujui</strong>
+
+        <p>Admin memberikan catatan berikut sebagai alasan penolakan:</p>
+
+        <blockquote>
+          {{ sellerStore.profile.verification_note }}
+        </blockquote>
+
+        <small>
+          Silakan perbaiki informasi toko sesuai catatan admin, kemudian simpan
+          perubahan untuk persiapan pengajuan ulang.
+        </small>
+      </div>
+    </div>
+
+    <div v-else-if="isRejected" class="rejection-notice">
+      <div class="rejection-notice-icon">
+        <AlertTriangle :size="22" />
+      </div>
+
+      <div class="rejection-notice-content">
+        <strong>Pengajuan toko ditolak</strong>
+        <p>Silakan periksa kembali dan lengkapi informasi profil toko.</p>
+      </div>
+    </div>
 
     <form class="store-form" @submit.prevent="saveStore">
       <section class="form-section">
@@ -240,7 +406,7 @@ onMounted(loadStore);
               type="file"
               accept="image/jpeg,image/png,image/webp"
               hidden
-              :disabled="isRestricted || !sellerStore.hasStore"
+              :disabled="isRestricted || sellerStore.saving"
               @change="handleImageUpload('logo', $event)"
             />
 
@@ -284,9 +450,7 @@ onMounted(loadStore);
             <button
               type="button"
               class="upload-button"
-              :disabled="
-                isRestricted || !sellerStore.hasStore || sellerStore.saving
-              "
+              :disabled="isRestricted || sellerStore.saving"
               @click="bannerInput?.click()"
             >
               {{ bannerPreview ? "Ganti Banner" : "Upload Banner" }}
@@ -297,8 +461,8 @@ onMounted(loadStore);
         </div>
 
         <p v-if="!sellerStore.hasStore" class="upload-hint">
-          Simpan identitas usaha terlebih dahulu sebelum mengunggah logo dan
-          banner.
+          Logo dan banner dapat diunggah terlebih dahulu. Pastikan identitas
+          usaha dilengkapi dan disimpan sebelum mengajukan verifikasi.
         </p>
       </section>
 
@@ -451,6 +615,26 @@ onMounted(loadStore);
           <Save v-else :size="17" />
 
           {{ sellerStore.saving ? "Menyimpan..." : "Simpan Profil Toko" }}
+        </button>
+      </div>
+
+      <div v-if="isRejected" class="resubmit-section">
+        <div class="resubmit-info">
+          <strong>Sudah memperbaiki profil toko?</strong>
+          <p>
+            Simpan semua perubahan terlebih dahulu, kemudian kirim ulang
+            pengajuan agar dapat diperiksa oleh Super Admin.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          class="resubmit-button"
+          :disabled="sellerStore.saving || isSuspended"
+          @click="resubmitApplication"
+        >
+          <span v-if="sellerStore.saving"> Mengirim pengajuan... </span>
+          <span v-else> Ajukan Ulang Verifikasi </span>
         </button>
       </div>
     </form>
@@ -844,5 +1028,193 @@ onMounted(loadStore);
   .image-upload-grid {
     grid-template-columns: 1fr;
   }
+}
+
+.rejection-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 24px;
+  padding: 18px;
+  border: 1px solid #f0d5ca;
+  border-radius: 12px;
+  background: #fff6f2;
+}
+
+.rejection-notice-icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 11px;
+  background: #fbe7df;
+  color: #ad4938;
+}
+
+.rejection-notice-content {
+  min-width: 0;
+}
+
+.rejection-notice-content strong {
+  display: block;
+  color: #873b2c;
+  font-size: 13px;
+}
+
+.rejection-notice-content p {
+  margin: 7px 0;
+  color: #796257;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.rejection-notice-content blockquote {
+  margin: 12px 0;
+  padding: 12px 14px;
+  border-left: 3px solid #ad4938;
+  border-radius: 0 7px 7px 0;
+  background: #fff;
+  color: #5c453b;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.rejection-notice-content small {
+  display: block;
+  color: #9a786b;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+/* Re-submit application */
+.resubmit-section {
+  margin-top: 28px;
+  padding: 22px;
+  border: 1px solid #e6ddd3;
+  border-radius: 16px;
+  background: #fbf7f2;
+}
+
+.resubmit-info strong {
+  display: block;
+  color: #38291f;
+  font-size: 15px;
+  margin-bottom: 7px;
+}
+
+.resubmit-info p {
+  color: #82776d;
+  font-size: 13px;
+  line-height: 1.7;
+  margin: 0 0 18px;
+}
+
+.resubmit-button {
+  width: 100%;
+  min-height: 46px;
+  border: none;
+  border-radius: 10px;
+  background: #943c14;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background 0.2s,
+    transform 0.2s;
+}
+
+.resubmit-button:hover:not(:disabled) {
+  background: #7d3210;
+  transform: translateY(-1px);
+}
+
+.resubmit-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Application toast */
+.application-toast {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 9999;
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  width: min(420px, calc(100vw - 32px));
+  padding: 17px;
+  border: 1px solid #e6ddd3;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 12px 40px rgba(44, 32, 23, 0.13);
+}
+
+.application-toast-icon {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  font-weight: 800;
+}
+
+.toast-success .application-toast-icon {
+  background: #e4f1e8;
+  color: #2d694d;
+}
+
+.toast-error .application-toast-icon {
+  background: #fbe9e5;
+  color: #943c14;
+}
+
+.application-toast-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.application-toast-content strong {
+  display: block;
+  margin-bottom: 5px;
+  color: #38291f;
+  font-size: 14px;
+}
+
+.application-toast-content p {
+  margin: 0;
+  color: #82776d;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.application-toast-close {
+  border: none;
+  background: transparent;
+  color: #998d82;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.application-toast-close:hover {
+  color: #38291f;
+}
+
+/* Toast animation */
+.toast-enter-active,
+.toast-leave-active {
+  transition: all 0.25s ease;
+}
+
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translateX(20px);
 }
 </style>

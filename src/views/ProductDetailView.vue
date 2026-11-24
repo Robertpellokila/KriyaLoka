@@ -1,491 +1,377 @@
 <script setup>
-import { computed, ref, watch } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { useRoute, RouterLink } from "vue-router";
 import {
-  ArrowLeft,
-  ArrowRight,
-  Check,
-  ChevronRight,
-  Heart,
-  MapPin,
+  ShoppingBag,
   Minus,
   Plus,
+  ArrowLeft,
+  Package,
   ShieldCheck,
-  ShoppingBag,
-  ShoppingCart,
-  Star,
   Truck,
+  Store,
+  ImageOff,
 } from "lucide-vue-next";
 
-import ProductCard from "../components/product/ProductCard.vue";
-import { products } from "../data/products.js";
-import { useCartStore } from "../stores/cart.js";
+import { useProductStore } from "@/stores/product.js";
+import { useCartStore } from "@/stores/cart.js";
+import AppToast from "@/components/ui/AppToast.vue";
 
 const route = useRoute();
+const productStore = useProductStore();
 const cartStore = useCartStore();
 
 const quantity = ref(1);
-const selectedImage = ref("");
-const activeTab = ref("description");
-const notification = ref("");
-const notificationType = ref("success");
+const activeImage = ref(0);
+const loading = ref(false);
+const loadError = ref("");
 
-const product = computed(() => {
-  return products.find((item) => String(item.id) === String(route.params.id));
+const toast = ref({
+  visible: false,
+  type: "success",
+  title: "",
+  message: "",
 });
 
-const gallery = computed(() => {
-  if (!product.value) return [];
+function showToast(type, title, message) {
+  toast.value = {
+    visible: true,
+    type,
+    title,
+    message,
+  };
+}
 
-  return product.value.gallery?.length
-    ? product.value.gallery
-    : [product.value.image];
+const product = computed(() => productStore.currentProduct);
+
+const images = computed(() => {
+  const productImages = product.value?.product_images || [];
+
+  return [...productImages]
+    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
+    .map((image) => image.image_url)
+    .filter(Boolean);
 });
 
-const relatedProducts = computed(() => {
-  if (!product.value) return [];
-
-  return products
-    .filter(
-      (item) =>
-        item.id !== product.value.id &&
-        item.category === product.value.category,
-    )
-    .slice(0, 4);
+const currentImage = computed(() => {
+  return (
+    images.value[activeImage.value] ||
+    "https://placehold.co/800x800/F3EBDD/943C14?text=KriyaLoka"
+  );
 });
 
-const fallbackRecommendations = computed(() => {
-  if (!product.value || relatedProducts.value.length > 0) {
-    return relatedProducts.value;
-  }
+const stock = computed(() => Number(product.value?.stock || 0));
 
-  return products.filter((item) => item.id !== product.value.id).slice(0, 4);
+const isAvailable = computed(() => {
+  return product.value?.status === "published" && stock.value > 0;
 });
 
-const formatPrice = (price) => {
+const totalPrice = computed(() => {
+  return Number(product.value?.price || 0) * quantity.value;
+});
+
+function formatPrice(price) {
   return new Intl.NumberFormat("id-ID", {
     style: "currency",
     currency: "IDR",
     maximumFractionDigits: 0,
-  }).format(price);
-};
+  }).format(Number(price || 0));
+}
 
-const discountPercentage = computed(() => {
-  if (
-    !product.value?.originalPrice ||
-    product.value.originalPrice <= product.value.price
-  ) {
-    return 0;
-  }
-
-  return Math.round(
-    ((product.value.originalPrice - product.value.price) /
-      product.value.originalPrice) *
-      100,
-  );
-});
-
-const increaseQuantity = () => {
-  if (!product.value) return;
-
-  if (quantity.value < product.value.stock) {
-    quantity.value++;
-  }
-};
-
-const decreaseQuantity = () => {
+function decreaseQuantity() {
   if (quantity.value > 1) {
     quantity.value--;
   }
-};
+}
 
-const addToCart = () => {
-  if (!product.value) return;
+function increaseQuantity() {
+  if (quantity.value < stock.value) {
+    quantity.value++;
+  }
+}
 
-  const result = cartStore.addItem(product.value, quantity.value);
-
-  notificationType.value = result.success ? "success" : "error";
-  notification.value = result.message;
-
-  if (result.success) {
-    quantity.value = 1;
+async function addToCart() {
+  if (!product.value || !isAvailable.value) {
+    showToast(
+      "error",
+      "Produk tidak tersedia",
+      "Produk ini belum tersedia atau stoknya sudah habis.",
+    );
+    return;
   }
 
-  window.clearTimeout(notificationTimer);
-  notificationTimer = window.setTimeout(() => {
-    notification.value = "";
-  }, 3500);
-};
+  const result = await cartStore.addItem(
+    {
+      id: product.value.id,
+      name: product.value.name,
+      artisan:
+        product.value.artisan ||
+        product.value.store_name ||
+        "Pengrajin KriyaLoka",
+      image: images.value[0] || currentImage.value,
+      price: Number(product.value.price),
+      stock: stock.value,
+    },
+    quantity.value,
+  );
 
-let notificationTimer;
+  showToast(
+    result.success ? "success" : "error",
+    result.success ? "Berhasil ditambahkan" : "Gagal menambahkan produk",
+    result.message,
+  );
+}
+
+async function loadProduct(productId) {
+  loading.value = true;
+  loadError.value = "";
+  quantity.value = 1;
+  activeImage.value = 0;
+
+  productStore.clearCurrentProduct();
+
+  try {
+    await productStore.fetchProductById(productId);
+
+    if (!productStore.currentProduct) {
+      loadError.value = "Produk yang kamu cari tidak ditemukan.";
+    }
+  } catch (error) {
+    console.error("Gagal mengambil detail produk:", error);
+    loadError.value =
+      error.message || "Terjadi kesalahan saat mengambil detail produk.";
+  } finally {
+    loading.value = false;
+  }
+}
+
+onMounted(() => {
+  loadProduct(route.params.id);
+});
 
 watch(
   () => route.params.id,
-  () => {
-    quantity.value = 1;
-    activeTab.value = "description";
-    notification.value = "";
+  (newId, oldId) => {
+    if (newId && newId !== oldId) {
+      loadProduct(newId);
+    }
   },
-  { immediate: true },
-);
-
-watch(
-  [product, gallery],
-  () => {
-    selectedImage.value = gallery.value[0] || "";
-  },
-  { immediate: true },
 );
 </script>
 
 <template>
-  <main v-if="product" class="detail-page">
-    <!-- BREADCRUMB -->
+  <div class="detail-page">
+    <AppToast
+      v-model="toast.visible"
+      :type="toast.type"
+      :title="toast.title"
+      :message="toast.message"
+      :duration="3500"
+    />
+
     <div class="detail-container">
-      <nav class="breadcrumb">
-        <RouterLink to="/">Beranda</RouterLink>
-        <ChevronRight :size="13" />
-        <RouterLink to="/katalog">Katalog</RouterLink>
-        <ChevronRight :size="13" />
-        <span>{{ product.category }}</span>
-        <ChevronRight :size="13" />
-        <span class="breadcrumb-current">{{ product.name }}</span>
-      </nav>
+      <RouterLink to="/katalog" class="back-link">
+        <ArrowLeft :size="17" />
+        Kembali ke Katalog
+      </RouterLink>
 
-      <!-- PRODUCT DETAIL -->
-      <section class="product-detail-layout">
-        <!-- GALLERY -->
-        <div class="gallery-section">
+      <div v-if="loading" class="loading-state">
+        <div class="loading-spinner"></div>
+        <p>Sedang memuat detail produk...</p>
+      </div>
+
+      <div v-else-if="loadError" class="error-state">
+        <div class="error-icon">
+          <ImageOff :size="34" />
+        </div>
+        <h2>Produk tidak ditemukan</h2>
+        <p>{{ loadError }}</p>
+        <RouterLink to="/katalog" class="primary-button">
+          Kembali ke Katalog
+        </RouterLink>
+      </div>
+
+      <div v-else-if="product" class="product-detail">
+        <div class="product-gallery">
           <div class="main-image">
-            <img :src="selectedImage || product.image" :alt="product.name" />
-
-            <span v-if="product.badge" class="image-badge">
-              {{ product.badge }}
-            </span>
-
-            <span v-if="discountPercentage" class="discount-badge">
-              -{{ discountPercentage }}%
-            </span>
+            <img :src="currentImage" :alt="product.name" />
           </div>
 
-          <div class="thumbnail-list">
+          <div v-if="images.length > 1" class="thumbnail-list">
             <button
-              v-for="(image, index) in gallery"
-              :key="image"
-              :class="{ active: selectedImage === image }"
-              @click="selectedImage = image"
-              :aria-label="`Lihat foto ${index + 1}`"
+              v-for="(image, index) in images"
+              :key="`${image}-${index}`"
+              type="button"
+              class="thumbnail"
+              :class="{ active: activeImage === index }"
+              @click="activeImage = index"
             >
               <img :src="image" :alt="`${product.name} ${index + 1}`" />
             </button>
           </div>
         </div>
 
-        <!-- PRODUCT INFORMATION -->
         <div class="product-information">
-          <div class="product-category-label">
-            {{ product.category }}
-          </div>
+          <span class="product-category">
+            {{ product.category || "Kerajinan Lokal" }}
+          </span>
 
           <h1>{{ product.name }}</h1>
 
-          <div class="rating-row">
-            <div class="rating-stars">
-              <Star :size="15" fill="#D99B35" color="#D99B35" />
-              <strong>{{ product.rating }}</strong>
+          <div class="artisan-information">
+            <div class="artisan-icon">
+              <Store :size="18" />
             </div>
-
-            <span class="rating-separator">|</span>
-            <span>{{ product.sold }} produk terjual</span>
+            <div>
+              <span>Diproduksi oleh</span>
+              <strong>
+                {{
+                  product.artisan ||
+                  product.store_name ||
+                  "Pengrajin Lokal KriyaLoka"
+                }}
+              </strong>
+            </div>
           </div>
 
           <div class="price-section">
-            <strong class="current-price">
-              {{ formatPrice(product.price) }}
-            </strong>
+            <span>Harga produk</span>
+            <strong>{{ formatPrice(product.price) }}</strong>
+          </div>
 
-            <div v-if="product.originalPrice" class="original-price-row">
-              <del>{{ formatPrice(product.originalPrice) }}</del>
-              <span v-if="discountPercentage">
-                Hemat {{ discountPercentage }}%
-              </span>
+          <p class="product-description">
+            {{ product.description || "Belum ada deskripsi untuk produk ini." }}
+          </p>
+
+          <div class="product-specifications">
+            <div class="specification">
+              <Package :size="19" />
+              <div>
+                <span>Stok tersedia</span>
+                <strong>{{ stock }} produk</strong>
+              </div>
+            </div>
+
+            <div class="specification">
+              <Truck :size="19" />
+              <div>
+                <span>Berat produk</span>
+                <strong>
+                  {{
+                    Number(product.weight_grams || 0).toLocaleString("id-ID")
+                  }}
+                  gram
+                </strong>
+              </div>
             </div>
           </div>
 
-          <div class="stock-indicator">
-            <span
-              class="stock-dot"
-              :class="{ 'low-stock': product.stock <= 5 }"
-            ></span>
+          <div v-if="isAvailable" class="purchase-section">
+            <label class="quantity-label">Jumlah produk</label>
 
-            <span>
-              {{
-                product.stock > 0
-                  ? `${product.stock} produk tersedia`
-                  : "Stok habis"
-              }}
-            </span>
-          </div>
-
-          <div class="product-divider"></div>
-
-          <!-- ARTISAN -->
-          <div class="artisan-summary">
-            <div class="artisan-avatar">
-              {{ product.artisan.charAt(0) }}
-            </div>
-
-            <div class="artisan-summary-info">
-              <span>Diproduksi oleh</span>
-              <strong>{{ product.artisan }}</strong>
-              <small>
-                <MapPin :size="12" />
-                {{ product.location }}
-              </small>
-            </div>
-
-            <span class="artisan-verified">
-              <ShieldCheck :size="16" />
-              Pengrajin Lokal
-            </span>
-          </div>
-
-          <div class="product-divider"></div>
-
-          <!-- QUANTITY -->
-          <div class="purchase-section">
-            <label>Jumlah Pembelian</label>
-
-            <div class="quantity-row">
+            <div class="purchase-controls">
               <div class="quantity-control">
                 <button
+                  type="button"
                   :disabled="quantity <= 1"
                   @click="decreaseQuantity"
-                  aria-label="Kurangi jumlah"
                 >
-                  <Minus :size="15" />
+                  <Minus :size="16" />
                 </button>
 
                 <span>{{ quantity }}</span>
 
                 <button
-                  :disabled="quantity >= product.stock"
+                  type="button"
+                  :disabled="quantity >= stock"
                   @click="increaseQuantity"
-                  aria-label="Tambah jumlah"
                 >
-                  <Plus :size="15" />
+                  <Plus :size="16" />
                 </button>
               </div>
 
-              <span class="quantity-hint">
-                Maksimal {{ product.stock }} produk
-              </span>
+              <span class="available-stock"> Maks. {{ stock }} produk </span>
             </div>
-          </div>
 
-          <!-- ACTIONS -->
-          <div class="purchase-actions">
-            <button
-              class="add-cart-button"
-              :disabled="product.stock <= 0"
-              @click="addToCart"
-            >
-              <ShoppingCart :size="18" />
-              {{ product.stock > 0 ? "Tambah ke Keranjang" : "Stok Habis" }}
-            </button>
+            <div class="purchase-total">
+              <span>Total harga</span>
+              <strong>{{ formatPrice(totalPrice) }}</strong>
+            </div>
 
-            <RouterLink
-              to="/keranjang"
-              class="view-cart-button"
-              aria-label="Lihat keranjang"
-            >
+            <button type="button" class="add-to-cart-button" @click="addToCart">
               <ShoppingBag :size="19" />
-            </RouterLink>
+              Tambah ke Keranjang
+            </button>
           </div>
 
-          <div
-            v-if="notification"
-            class="notification"
-            :class="notificationType"
-          >
-            <Check v-if="notificationType === 'success'" :size="16" />
-            <span>{{ notification }}</span>
-
-            <RouterLink v-if="notificationType === 'success'" to="/keranjang">
-              Lihat keranjang
-            </RouterLink>
+          <div v-else class="unavailable-box">
+            <strong>
+              {{ stock <= 0 ? "Stok sedang habis" : "Produk belum tersedia" }}
+            </strong>
+            <p>Produk ini belum dapat ditambahkan ke keranjang.</p>
           </div>
 
-          <!-- DELIVERY INFORMATION -->
-          <div class="delivery-information">
+          <div class="purchase-benefits">
             <div>
-              <Truck :size="19" />
-              <div>
-                <strong>Pengiriman Produk</strong>
-                <span
-                  >Informasi ongkos kirim tersedia pada tahap checkout.</span
-                >
-              </div>
+              <ShieldCheck :size="18" />
+              <span>Produk dari pengrajin lokal</span>
             </div>
-
             <div>
-              <ShieldCheck :size="19" />
-              <div>
-                <strong>Produk Pengrajin Lokal</strong>
-                <span
-                  >Setiap produk memiliki karakter dan keunikan
-                  tersendiri.</span
-                >
-              </div>
+              <Package :size="18" />
+              <span>Detail pesanan tersimpan di KriyaLoka</span>
             </div>
           </div>
         </div>
-      </section>
-
-      <!-- PRODUCT DESCRIPTION -->
-      <section class="product-information-section">
-        <div class="detail-tabs">
-          <button
-            :class="{ active: activeTab === 'description' }"
-            @click="activeTab = 'description'"
-          >
-            Deskripsi Produk
-          </button>
-
-          <button
-            :class="{ active: activeTab === 'specification' }"
-            @click="activeTab = 'specification'"
-          >
-            Detail Produk
-          </button>
-
-          <button
-            :class="{ active: activeTab === 'artisan' }"
-            @click="activeTab = 'artisan'"
-          >
-            Tentang Pengrajin
-          </button>
-        </div>
-
-        <div class="tab-content">
-          <div v-if="activeTab === 'description'">
-            <h2>Tentang Produk</h2>
-            <p>{{ product.description }}</p>
-          </div>
-
-          <div v-else-if="activeTab === 'specification'">
-            <h2>Spesifikasi Produk</h2>
-
-            <div class="specification-list">
-              <div v-for="detail in product.details" :key="detail.label">
-                <span>{{ detail.label }}</span>
-                <strong>{{ detail.value }}</strong>
-              </div>
-            </div>
-          </div>
-
-          <div v-else>
-            <h2>{{ product.artisan }}</h2>
-            <p>{{ product.artisanBio }}</p>
-
-            <div class="artisan-location-detail">
-              <MapPin :size="16" />
-              {{ product.location }}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- RELATED PRODUCTS -->
-      <section v-if="fallbackRecommendations.length" class="related-section">
-        <div class="related-heading">
-          <div>
-            <span class="section-eyebrow">KOLEKSI LAINNYA</span>
-            <h2>Karya yang Mungkin Kamu Sukai</h2>
-          </div>
-
-          <RouterLink to="/katalog">
-            Jelajahi semua
-            <ArrowRight :size="16" />
-          </RouterLink>
-        </div>
-
-        <div class="related-grid">
-          <ProductCard
-            v-for="item in fallbackRecommendations"
-            :key="item.id"
-            :product="item"
-          />
-        </div>
-      </section>
+      </div>
     </div>
-  </main>
-
-  <!-- PRODUCT NOT FOUND -->
-  <main v-else class="not-found">
-    <div>
-      <h1>Produk Tidak Ditemukan</h1>
-      <p>Produk yang kamu cari mungkin sudah tidak tersedia.</p>
-      <RouterLink to="/katalog">
-        <ArrowLeft :size="16" />
-        Kembali ke Katalog
-      </RouterLink>
-    </div>
-  </main>
+  </div>
 </template>
 
 <style scoped>
 .detail-page {
-  min-height: 70vh;
-  padding: 28px 24px 85px;
-  color: #3e3028;
-  background: #fbf7f2;
+  min-height: 100vh;
+  padding: 35px 20px 80px;
+  background: #faf7f0;
+  color: #30291f;
 }
 
 .detail-container {
-  width: 100%;
-  max-width: 1180px;
-  margin: 0 auto;
+  max-width: 1150px;
+  margin: auto;
 }
 
-.breadcrumb {
-  display: flex;
+.back-link {
+  display: inline-flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 35px;
-  color: #a19488;
-  font-size: 11px;
-}
-
-.breadcrumb a {
-  color: #943c14;
+  gap: 9px;
+  margin-bottom: 30px;
+  color: #827768;
+  font-size: 13px;
   text-decoration: none;
+  transition: color 0.2s;
 }
 
-.breadcrumb-current {
-  color: #554438;
+.back-link:hover {
+  color: #943c14;
 }
 
-/* PRODUCT LAYOUT */
-.product-detail-layout {
+.product-detail {
   display: grid;
-  grid-template-columns: 1fr 0.9fr;
-  align-items: start;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
   gap: 55px;
+  align-items: start;
 }
 
-/* GALLERY */
-.gallery-section {
+.product-gallery {
   min-width: 0;
 }
 
 .main-image {
-  position: relative;
+  width: 100%;
+  height: 510px;
   overflow: hidden;
-  aspect-ratio: 1 / 1;
-  background: #f0e8df;
-  border-radius: 17px;
+  background: #eee6da;
+  border-radius: 7px;
 }
 
 .main-image img {
@@ -494,597 +380,377 @@ watch(
   object-fit: cover;
 }
 
-.image-badge,
-.discount-badge {
-  position: absolute;
-  top: 17px;
-  padding: 8px 12px;
-  color: #fff;
-  border-radius: 20px;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.image-badge {
-  left: 17px;
-  background: #943c14;
-}
-
-.discount-badge {
-  right: 17px;
-  background: #2d694d;
-}
-
 .thumbnail-list {
   display: flex;
   gap: 12px;
   margin-top: 15px;
+  flex-wrap: wrap;
 }
 
-.thumbnail-list button {
-  overflow: hidden;
-  width: 85px;
-  height: 85px;
+.thumbnail {
+  width: 75px;
+  height: 75px;
   padding: 0;
-  background: #f0e8df;
   border: 2px solid transparent;
-  border-radius: 10px;
+  border-radius: 4px;
+  background: #eee6da;
+  overflow: hidden;
   cursor: pointer;
 }
 
-.thumbnail-list button.active {
+.thumbnail.active {
   border-color: #943c14;
 }
 
-.thumbnail-list img {
+.thumbnail img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
-/* INFORMATION */
 .product-information {
-  min-width: 0;
-  padding-top: 8px;
+  padding-top: 10px;
 }
 
-.product-category-label {
-  color: #a16a48;
+.product-category {
+  display: inline-block;
+  padding: 7px 12px;
+  border-radius: 3px;
+  background: #e8eadf;
+  color: #64704c;
   font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 1.2px;
-  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: 0.5px;
 }
 
 .product-information h1 {
-  margin: 13px 0;
+  margin: 17px 0 20px;
   font-family: Georgia, serif;
-  font-size: clamp(30px, 3vw, 39px);
-  font-weight: 600;
-  line-height: 1.2;
+  font-size: clamp(32px, 4vw, 45px);
+  line-height: 1.15;
+  font-weight: 500;
+  letter-spacing: -1px;
 }
 
-.rating-row,
-.rating-stars {
+.artisan-information {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 12px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid #e8dfd2;
 }
 
-.rating-row {
-  color: #8e8075;
-  font-size: 11px;
-}
-
-.rating-stars {
-  color: #5c4c3f;
-}
-
-.rating-stars strong {
-  font-size: 12px;
-}
-
-.rating-separator {
-  color: #c8bdb2;
-}
-
-.price-section {
-  margin-top: 28px;
-}
-
-.current-price {
-  color: #943c14;
-  font-family: Georgia, serif;
-  font-size: 29px;
-}
-
-.original-price-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 7px;
-}
-
-.original-price-row del {
-  color: #a79b90;
-  font-size: 12px;
-}
-
-.original-price-row span {
-  color: #2d694d;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.stock-indicator {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 16px;
-  color: #6f665d;
-  font-size: 12px;
-}
-
-.stock-dot {
-  width: 8px;
-  height: 8px;
-  background: #2d9b63;
-  border-radius: 50%;
-}
-
-.stock-dot.low-stock {
-  background: #d48a35;
-}
-
-.product-divider {
-  height: 1px;
-  margin: 24px 0;
-  background: #eae1d8;
-}
-
-/* ARTISAN */
-.artisan-summary {
-  display: flex;
-  align-items: center;
-  gap: 13px;
-}
-
-.artisan-avatar {
+.artisan-icon {
+  width: 42px;
+  height: 42px;
   display: grid;
   place-items: center;
-  width: 49px;
-  height: 49px;
-  flex-shrink: 0;
-  color: #943c14;
-  background: #f0e2d4;
   border-radius: 50%;
-  font-family: Georgia, serif;
-  font-size: 21px;
-  font-weight: 700;
+  background: #efe5d4;
+  color: #943c14;
 }
 
-.artisan-summary-info {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 4px;
+.artisan-information span,
+.artisan-information strong {
+  display: block;
 }
 
-.artisan-summary-info > span {
-  color: #9c8d81;
-  font-size: 10px;
+.artisan-information span {
+  color: #8b806f;
+  font-size: 11px;
+  margin-bottom: 4px;
 }
 
-.artisan-summary-info strong {
+.artisan-information strong {
+  color: #514738;
   font-size: 13px;
 }
 
-.artisan-summary-info small {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: #95877b;
-  font-size: 10px;
+.price-section {
+  padding: 23px 0;
 }
 
-.artisan-verified {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  color: #2d694d;
-  font-size: 10px;
+.price-section span,
+.purchase-total span {
+  display: block;
+  color: #827768;
+  font-size: 12px;
+  margin-bottom: 7px;
+}
+
+.price-section strong {
+  color: #943c14;
+  font-size: 28px;
   font-weight: 700;
 }
 
-/* QUANTITY */
-.purchase-section > label {
+.product-description {
+  color: #716657;
+  font-size: 14px;
+  line-height: 1.9;
+  white-space: pre-line;
+}
+
+.product-specifications {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 25px 0;
+}
+
+.specification {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 15px 12px;
+  background: #f1ebdf;
+  border-radius: 5px;
+  color: #64704c;
+}
+
+.specification span,
+.specification strong {
   display: block;
-  margin-bottom: 13px;
+}
+
+.specification span {
+  color: #8b806f;
+  font-size: 10px;
+  margin-bottom: 4px;
+}
+
+.specification strong {
+  color: #514738;
+  font-size: 12px;
+}
+
+.purchase-section {
+  padding: 22px;
+  border: 1px solid #e8dfd2;
+  border-radius: 6px;
+  background: #fffdf9;
+}
+
+.quantity-label {
+  display: block;
+  color: #514738;
   font-size: 12px;
   font-weight: 700;
+  margin-bottom: 10px;
 }
 
-.quantity-row {
+.purchase-controls {
   display: flex;
   align-items: center;
-  gap: 15px;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .quantity-control {
+  height: 40px;
   display: flex;
   align-items: center;
-  height: 39px;
-  background: #fff;
-  border: 1px solid #e4d9ce;
-  border-radius: 8px;
+  border: 1px solid #e5dac9;
+  border-radius: 4px;
+  overflow: hidden;
 }
 
 .quantity-control button {
+  width: 39px;
+  height: 100%;
   display: grid;
   place-items: center;
-  width: 38px;
-  height: 100%;
-  color: #795b48;
-  background: transparent;
-  border: none;
+  border: 0;
+  background: #f1ebdf;
+  color: #514738;
   cursor: pointer;
 }
 
 .quantity-control button:disabled {
-  opacity: 0.3;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
 .quantity-control span {
-  min-width: 32px;
+  min-width: 40px;
   text-align: center;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
 }
 
-.quantity-hint {
-  color: #a09387;
-  font-size: 10px;
+.available-stock {
+  color: #8b806f;
+  font-size: 11px;
 }
 
-/* BUTTONS */
-.purchase-actions {
+.purchase-total {
   display: flex;
+  justify-content: space-between;
+  align-items: end;
   gap: 10px;
-  margin-top: 22px;
+  margin: 22px 0;
+  padding-top: 18px;
+  border-top: 1px solid #eee6da;
 }
 
-.add-cart-button,
-.view-cart-button {
+.purchase-total span {
+  margin: 0;
+}
+
+.purchase-total strong {
+  color: #943c14;
+  font-size: 19px;
+}
+
+.add-to-cart-button,
+.primary-button {
+  min-height: 48px;
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 10px;
-  height: 50px;
-  border-radius: 9px;
-  cursor: pointer;
-}
-
-.add-cart-button {
-  flex: 1;
-  color: #fff;
+  border: 0;
+  border-radius: 4px;
   background: #943c14;
-  border: none;
-  font-size: 12px;
-  font-weight: 700;
-  transition: 0.2s;
-}
-
-.add-cart-button:hover {
-  background: #71300f;
-}
-
-.add-cart-button:disabled {
-  background: #b6aaa0;
-  cursor: not-allowed;
-}
-
-.view-cart-button {
-  width: 50px;
-  color: #943c14;
-  background: #fff;
-  border: 1px solid #e4d9ce;
-}
-
-.notification {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 15px;
-  padding: 12px;
-  border-radius: 8px;
-  font-size: 11px;
-}
-
-.notification.success {
-  color: #276345;
-  background: #e9f3ec;
-}
-
-.notification.error {
-  color: #9b3b2d;
-  background: #faeae7;
-}
-
-.notification a {
-  color: inherit;
-  font-weight: 800;
-}
-
-/* DELIVERY */
-.delivery-information {
-  display: flex;
-  flex-direction: column;
-  gap: 17px;
-  margin-top: 27px;
-}
-
-.delivery-information > div {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  color: #96735c;
-}
-
-.delivery-information > div > div {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.delivery-information strong {
-  color: #554438;
-  font-size: 11px;
-}
-
-.delivery-information span {
-  color: #998b80;
-  font-size: 10px;
-  line-height: 1.6;
-}
-
-/* DESCRIPTION TABS */
-.product-information-section {
-  margin-top: 75px;
-  padding: 28px;
-  background: #fff;
-  border: 1px solid #eae1d8;
-  border-radius: 14px;
-}
-
-.detail-tabs {
-  display: flex;
-  gap: 30px;
-  border-bottom: 1px solid #eee7e0;
-}
-
-.detail-tabs button {
-  position: relative;
-  padding: 0 0 16px;
-  color: #95877b;
-  background: transparent;
-  border: none;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.detail-tabs button.active {
-  color: #943c14;
-  font-weight: 800;
-}
-
-.detail-tabs button.active::after {
-  position: absolute;
-  right: 0;
-  bottom: -1px;
-  left: 0;
-  height: 2px;
-  background: #943c14;
-  content: "";
-}
-
-.tab-content {
-  min-height: 145px;
-  padding-top: 25px;
-}
-
-.tab-content h2 {
-  margin: 0 0 13px;
-  font-family: Georgia, serif;
-  font-size: 21px;
-}
-
-.tab-content p {
-  max-width: 800px;
-  margin: 0;
-  color: #827469;
-  font-size: 12px;
-  line-height: 1.9;
-}
-
-.specification-list {
-  max-width: 650px;
-}
-
-.specification-list > div {
-  display: flex;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 12px 0;
-  border-bottom: 1px solid #f0eae4;
-  font-size: 12px;
-}
-
-.specification-list span {
-  color: #93857a;
-}
-
-.specification-list strong {
-  color: #59483b;
-  text-align: right;
-}
-
-.artisan-location-detail {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-top: 15px;
-  color: #943c14;
-  font-size: 12px;
-}
-
-/* RELATED PRODUCTS */
-.related-section {
-  margin-top: 75px;
-}
-
-.related-heading {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 20px;
-  margin-bottom: 28px;
-}
-
-.section-eyebrow {
-  color: #943c14;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 1.3px;
-}
-
-.related-heading h2 {
-  margin: 10px 0 0;
-  font-family: Georgia, serif;
-  font-size: 29px;
-  font-weight: 600;
-}
-
-.related-heading > a {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: #943c14;
-  font-size: 11px;
+  color: white;
+  font-size: 13px;
   font-weight: 700;
   text-decoration: none;
+  cursor: pointer;
+  transition: background 0.2s;
 }
 
-.related-grid {
+.add-to-cart-button:hover,
+.primary-button:hover {
+  background: #78300f;
+}
+
+.unavailable-box {
+  padding: 20px;
+  border: 1px solid #e8c9bc;
+  border-radius: 5px;
+  background: #f8eae4;
+  color: #943c14;
+}
+
+.unavailable-box p {
+  margin-bottom: 0;
+  font-size: 12px;
+}
+
+.purchase-benefits {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 17px;
+  gap: 12px;
+  margin-top: 23px;
 }
 
-/* NOT FOUND */
-.not-found {
+.purchase-benefits div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #64704c;
+}
+
+.purchase-benefits span {
+  color: #827768;
+  font-size: 11px;
+}
+
+.loading-state,
+.error-state {
+  padding: 90px 20px;
+  text-align: center;
+  color: #827768;
+}
+
+.loading-spinner {
+  width: 36px;
+  height: 36px;
+  margin: 0 auto 15px;
+  border: 3px solid #e7ddcf;
+  border-top-color: #943c14;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.error-icon {
+  width: 65px;
+  height: 65px;
+  margin: 0 auto 18px;
   display: grid;
   place-items: center;
-  min-height: 65vh;
-  padding: 30px;
-  background: #fbf7f2;
-  text-align: center;
-}
-
-.not-found h1 {
-  font-family: Georgia, serif;
-}
-
-.not-found p {
-  color: #897b70;
-  font-size: 13px;
-}
-
-.not-found a {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 15px;
+  border-radius: 50%;
+  background: #eee6da;
   color: #943c14;
-  font-size: 12px;
-  font-weight: 700;
-  text-decoration: none;
 }
 
-/* RESPONSIVE */
-@media (max-width: 900px) {
-  .product-detail-layout {
+.error-state h2 {
+  font-family: Georgia, serif;
+  font-weight: 500;
+  color: #30291f;
+}
+
+.error-state p {
+  font-size: 13px;
+  margin-bottom: 22px;
+}
+
+.primary-button {
+  width: auto;
+  display: inline-flex;
+  padding: 0 20px;
+}
+
+@media (max-width: 800px) {
+  .product-detail {
+    grid-template-columns: 1fr;
     gap: 30px;
   }
 
-  .related-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .main-image {
+    height: min(500px, 75vw);
   }
 
-  .artisan-verified {
-    display: none;
+  .product-information {
+    padding-top: 0;
   }
 }
 
-@media (max-width: 650px) {
+@media (max-width: 480px) {
   .detail-page {
-    padding: 22px 17px 60px;
-  }
-
-  .breadcrumb {
-    margin-bottom: 23px;
-    font-size: 10px;
-  }
-
-  .product-detail-layout {
-    grid-template-columns: 1fr;
-    gap: 28px;
+    padding: 25px 15px 55px;
   }
 
   .main-image {
-    border-radius: 12px;
-  }
-
-  .thumbnail-list button {
-    width: 68px;
-    height: 68px;
+    height: 350px;
   }
 
   .product-information h1 {
-    font-size: 31px;
+    font-size: 34px;
   }
 
-  .product-information-section {
-    margin-top: 50px;
-    padding: 20px 16px;
+  .product-specifications {
+    gap: 8px;
   }
 
-  .detail-tabs {
-    gap: 20px;
-    overflow-x: auto;
+  .specification {
+    padding: 12px 8px;
+    gap: 7px;
   }
 
-  .detail-tabs button {
-    flex-shrink: 0;
+  .specification strong {
     font-size: 11px;
   }
 
-  .related-section {
-    margin-top: 50px;
-  }
-
-  .related-heading {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .related-heading h2 {
-    font-size: 25px;
-  }
-
-  .related-grid {
-    gap: 12px;
+  .purchase-section {
+    padding: 17px;
   }
 }
 </style>

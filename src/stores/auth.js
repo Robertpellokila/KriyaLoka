@@ -8,6 +8,7 @@ export const useAuthStore = defineStore("auth", {
   state: () => ({
     user: null,
     profile: null,
+    sellerProfile: null,
     loading: false,
     initialized: false,
   }),
@@ -28,13 +29,21 @@ export const useAuthStore = defineStore("auth", {
     isSellerApproved: (state) =>
       state.profile?.role === "seller" &&
       state.profile?.account_status === "active",
+
+    isSellerRejected: (state) =>
+      state.profile?.role === "seller" &&
+      state.profile?.account_status === "rejected",
+
+    sellerVerificationNote: (state) =>
+      state.sellerProfile?.verification_note ?? null,
   },
 
   actions: {
-    // Mengambil profil dari tabel profiles
+    // Mengambil profil utama dari tabel profiles
     async fetchProfile(userId) {
       if (!userId) {
         this.profile = null;
+        this.sellerProfile = null;
         return null;
       }
 
@@ -46,10 +55,42 @@ export const useAuthStore = defineStore("auth", {
 
       if (error) {
         this.profile = null;
+        this.sellerProfile = null;
         throw error;
       }
 
       this.profile = data;
+
+      // Jika akun merupakan seller, ambil profil seller
+      if (data.role === "seller") {
+        await this.fetchSellerProfile(userId);
+      } else {
+        this.sellerProfile = null;
+      }
+
+      return data;
+    },
+
+    // Mengambil informasi tambahan seller
+    async fetchSellerProfile(userId) {
+      if (!userId) {
+        this.sellerProfile = null;
+        return null;
+      }
+
+      const { data, error } = await supabase
+        .from("seller_profiles")
+        .select("id, verification_note, verified_at, verified_by")
+        .eq("id", userId)
+        .maybeSingle();
+
+      if (error) {
+        this.sellerProfile = null;
+        throw error;
+      }
+
+      this.sellerProfile = data;
+
       return data;
     },
 
@@ -73,22 +114,31 @@ export const useAuthStore = defineStore("auth", {
 
           if (this.user) {
             await this.fetchProfile(this.user.id);
+          } else {
+            this.profile = null;
+            this.sellerProfile = null;
           }
 
           // Dengarkan perubahan status autentikasi
           if (!authSubscription) {
             const { data: listener } = supabase.auth.onAuthStateChange(
               (_event, session) => {
-                this.user = session?.user ?? null;
+                const user = session?.user ?? null;
 
-                if (!this.user) {
+                this.user = user;
+
+                if (!user) {
                   this.profile = null;
-                } else {
-                  // Jalankan setelah callback auth selesai
-                  Promise.resolve().then(() => {
-                    this.fetchProfile(this.user.id).catch(console.error);
-                  });
+                  this.sellerProfile = null;
+                  return;
                 }
+
+                // Jalankan setelah callback auth selesai
+                Promise.resolve()
+                  .then(() => {
+                    return this.fetchProfile(user.id);
+                  })
+                  .catch(console.error);
               },
             );
 
@@ -159,6 +209,7 @@ export const useAuthStore = defineStore("auth", {
 
       this.user = null;
       this.profile = null;
+      this.sellerProfile = null;
     },
 
     // Memuat ulang profil
@@ -166,6 +217,16 @@ export const useAuthStore = defineStore("auth", {
       if (!this.user) return null;
 
       return this.fetchProfile(this.user.id);
+    },
+
+    // Memuat ulang informasi seller
+    async refreshSellerProfile() {
+      if (!this.user || this.profile?.role !== "seller") {
+        this.sellerProfile = null;
+        return null;
+      }
+
+      return this.fetchSellerProfile(this.user.id);
     },
   },
 });

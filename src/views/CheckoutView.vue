@@ -1,104 +1,380 @@
 <script setup>
-import { computed, ref } from "vue";
+import { computed, ref, reactive, onMounted } from "vue";
 import { RouterLink } from "vue-router";
 import {
   ArrowLeft,
   ArrowRight,
   MapPin,
   Truck,
-  CreditCard,
   ShieldCheck,
   ShoppingBag,
   CheckCircle2,
+  Plus,
+  MapPinned,
+  PackageCheck,
+  CreditCard,
 } from "lucide-vue-next";
+
 import { useCartStore } from "../stores/cart.js";
+import { supabase } from "../services/supabase.js";
+import AppToast from "@/components/ui/AppToast.vue";
 
 const cartStore = useCartStore();
 
-const form = ref({
-  recipient: "",
-  phone: "",
-  province: "",
-  city: "",
-  district: "",
-  postalCode: "",
-  address: "",
-  notes: "",
-  shipping: "regular",
-  payment: "bank_transfer",
+// ==========================================
+// STATE ALAMAT
+// ==========================================
+
+const addresses = ref([]);
+const selectedAddressId = ref(null);
+const loadingAddresses = ref(true);
+const addressError = ref("");
+
+// ==========================================
+// STATE HALAMAN
+// ==========================================
+
+const loadingPage = ref(true);
+const showReview = ref(false);
+const submitting = ref(false);
+
+const orderCreated = ref(false);
+const createdOrderNumber = ref("");
+const createdOrderId = ref(null);
+
+// ==========================================
+// TOAST
+// ==========================================
+
+const toast = reactive({
+  visible: false,
+  type: "success",
+  title: "",
+  message: "",
 });
 
-const showReview = ref(false);
-const notification = ref("");
+function showToast(type, title, message) {
+  toast.type = type;
+  toast.title = title;
+  toast.message = message;
+  toast.visible = true;
+}
 
-const shippingOptions = [
-  {
-    id: "regular",
-    name: "Reguler",
-    description: "Pengiriman standar",
-  },
-  {
-    id: "express",
-    name: "Express",
-    description: "Pengiriman lebih cepat",
-  },
-];
+// ==========================================
+// COMPUTED
+// ==========================================
 
-const paymentOptions = [
-  {
-    id: "bank_transfer",
-    name: "Transfer Bank",
-    description: "Pembayaran melalui transfer bank",
-  },
-  {
-    id: "ewallet",
-    name: "E-Wallet",
-    description: "Pembayaran melalui dompet digital",
-  },
-];
-
-const formatCurrency = (value) => {
-  return new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(value);
-};
-
-const selectedShipping = computed(() =>
-  shippingOptions.find((item) => item.id === form.value.shipping),
-);
-
-const selectedPayment = computed(() =>
-  paymentOptions.find((item) => item.id === form.value.payment),
-);
+const selectedAddress = computed(() => {
+  return (
+    addresses.value.find((address) => address.id === selectedAddressId.value) ||
+    null
+  );
+});
 
 const subtotal = computed(() => cartStore.subtotal);
 
 const isCartEmpty = computed(() => cartStore.items.length === 0);
 
-const submitAddress = () => {
+const totalItems = computed(() => cartStore.totalItems);
+
+// ==========================================
+// FORMAT CURRENCY
+// ==========================================
+
+function formatCurrency(value) {
+  return new Intl.NumberFormat("id-ID", {
+    style: "currency",
+    currency: "IDR",
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(Number(value || 0));
+}
+
+// ==========================================
+// FORMAT ALAMAT
+// ==========================================
+
+function formatAddress(address) {
+  if (!address) return "";
+
+  return [
+    address.address_line,
+    address.district,
+    address.city,
+    address.province,
+    address.postal_code,
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
+// ==========================================
+// AMBIL ALAMAT BUYER
+// ==========================================
+
+async function fetchAddresses() {
+  loadingAddresses.value = true;
+  addressError.value = "";
+
+  try {
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+
+    if (authError) throw authError;
+
+    if (!user) {
+      throw new Error("Silakan login terlebih dahulu.");
+    }
+
+    const { data, error } = await supabase
+      .from("user_addresses")
+      .select(
+        `
+        id,
+        label,
+        recipient_name,
+        phone_number,
+        province,
+        city,
+        district,
+        postal_code,
+        address_line,
+        address_notes,
+        is_default
+      `,
+      )
+      .eq("user_id", user.id)
+      .order("is_default", { ascending: false })
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+
+    addresses.value = data || [];
+
+    // Prioritaskan alamat utama
+    const defaultAddress = addresses.value.find(
+      (address) => address.is_default,
+    );
+
+    if (defaultAddress) {
+      selectedAddressId.value = defaultAddress.id;
+    } else if (addresses.value.length > 0) {
+      selectedAddressId.value = addresses.value[0].id;
+    } else {
+      selectedAddressId.value = null;
+    }
+  } catch (error) {
+    console.error("Gagal mengambil alamat:", error);
+
+    addressError.value = error.message || "Gagal mengambil alamat pengiriman.";
+
+    showToast("error", "Gagal memuat alamat", addressError.value);
+  } finally {
+    loadingAddresses.value = false;
+  }
+}
+
+// ==========================================
+// INISIALISASI CHECKOUT
+// ==========================================
+
+async function initializeCheckout() {
+  loadingPage.value = true;
+
+  try {
+    // Ambil data keranjang dari Supabase
+    const cartResult = await cartStore.fetchCart();
+
+    if (!cartResult?.success) {
+      throw new Error(cartResult?.message || "Gagal mengambil keranjang.");
+    }
+
+    // Ambil alamat buyer
+    await fetchAddresses();
+  } catch (error) {
+    console.error("Inisialisasi checkout gagal:", error);
+
+    showToast(
+      "error",
+      "Checkout tidak dapat dimuat",
+      error.message || "Silakan coba kembali.",
+    );
+  } finally {
+    loadingPage.value = false;
+  }
+}
+
+// ==========================================
+// PILIH ALAMAT
+// ==========================================
+
+function selectAddress(addressId) {
+  selectedAddressId.value = addressId;
+}
+
+// ==========================================
+// LANJUT KE REVIEW
+// ==========================================
+
+function submitAddress() {
+  if (!selectedAddress.value) {
+    showToast(
+      "warning",
+      "Alamat belum dipilih",
+      "Silakan pilih alamat pengiriman terlebih dahulu.",
+    );
+    return;
+  }
+
+  if (isCartEmpty.value) {
+    showToast(
+      "warning",
+      "Keranjang kosong",
+      "Tambahkan produk sebelum melanjutkan checkout.",
+    );
+    return;
+  }
+
   showReview.value = true;
-  notification.value = "";
-  window.scrollTo({ top: 0, behavior: "smooth" });
-};
 
-const editAddress = () => {
+  window.scrollTo({
+    top: 0,
+    behavior: "smooth",
+  });
+}
+
+// ==========================================
+// KEMBALI KE PILIH ALAMAT
+// ==========================================
+
+function editAddress() {
   showReview.value = false;
-  window.scrollTo({ top: 0, behavior: "smooth" });
-};
 
-const confirmOrder = () => {
-  notification.value =
-    "Form checkout berhasil diperiksa. Integrasi database pesanan dan pembayaran belum tersedia.";
-};
+  window.scrollTo({
+    top: 0,
+    behavior: "smooth",
+  });
+}
+
+// ==========================================
+// BUAT PESANAN
+// ==========================================
+
+async function confirmOrder() {
+  if (submitting.value || orderCreated.value) return;
+
+  if (!selectedAddress.value) {
+    showToast(
+      "warning",
+      "Alamat belum dipilih",
+      "Pilih alamat pengiriman terlebih dahulu.",
+    );
+
+    showReview.value = false;
+    return;
+  }
+
+  if (cartStore.items.length === 0) {
+    showToast("warning", "Keranjang kosong", "Tidak ada produk untuk dipesan.");
+    return;
+  }
+
+  submitting.value = true;
+
+  try {
+    // Siapkan produk yang akan dipesan
+    const items = cartStore.items.map((item) => ({
+      product_id: item.id,
+      quantity: item.quantity,
+    }));
+
+    // Panggil RPC Supabase
+    const { data, error } = await supabase.rpc("create_checkout_order", {
+      p_address_id: selectedAddressId.value,
+      p_items: items,
+      p_buyer_note: null,
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    // Validasi hasil RPC
+    if (!data || data.success !== true) {
+      throw new Error(
+        data?.message || "Pesanan belum berhasil dibuat. Silakan coba kembali.",
+      );
+    }
+
+    // Simpan informasi pesanan
+    createdOrderId.value = data.order?.id || data.order_id || null;
+
+    createdOrderNumber.value =
+      data.order?.order_number ||
+      data.order_number ||
+      "Pesanan berhasil dibuat";
+
+    // Tandai bahwa pesanan berhasil dibuat
+    orderCreated.value = true;
+
+    showReview.value = false;
+
+    // Bersihkan keranjang setelah transaksi berhasil
+    try {
+      const clearResult = await cartStore.clearCart();
+
+      if (clearResult?.success === false) {
+        throw new Error(clearResult.message || "Gagal membersihkan keranjang.");
+      }
+    } catch (clearError) {
+      console.error(
+        "Pesanan berhasil, tetapi keranjang gagal dibersihkan:",
+        clearError,
+      );
+
+      showToast(
+        "warning",
+        "Pesanan berhasil dibuat",
+        "Pesanan tersimpan, tetapi keranjang belum berhasil dibersihkan.",
+      );
+    }
+
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
+  } catch (error) {
+    console.error("Gagal membuat pesanan:", error);
+
+    showToast(
+      "error",
+      "Pesanan gagal dibuat",
+      error.message || "Terjadi kesalahan saat membuat pesanan.",
+    );
+  } finally {
+    submitting.value = false;
+  }
+}
+
+onMounted(() => {
+  initializeCheckout();
+});
 </script>
 
 <template>
   <main class="checkout-page">
+    <AppToast
+      v-model="toast.visible"
+      :type="toast.type"
+      :title="toast.title"
+      :message="toast.message"
+      :duration="3500"
+    />
+
     <div class="checkout-container">
-      <!-- Breadcrumb -->
+      <!-- BREADCRUMB -->
       <div class="checkout-breadcrumb">
         <RouterLink to="/">Beranda</RouterLink>
         <span>/</span>
@@ -107,18 +383,28 @@ const confirmOrder = () => {
         <span>Checkout</span>
       </div>
 
-      <!-- Heading -->
+      <!-- HEADING -->
       <section class="checkout-heading">
         <span class="section-eyebrow">LANGKAH TERAKHIR</span>
         <h1>Checkout Pesanan</h1>
-        <p>Lengkapi informasi pengiriman untuk melanjutkan pesananmu.</p>
+        <p>Periksa pesanan dan pastikan alamat pengirimanmu sudah benar.</p>
       </section>
 
-      <!-- Empty Cart -->
-      <section v-if="isCartEmpty" class="checkout-empty">
+      <!-- LOADING -->
+      <section v-if="loadingPage" class="checkout-empty">
+        <div class="checkout-loading-spinner"></div>
+        <h2>Menyiapkan Checkout...</h2>
+        <p>Sedang memuat keranjang dan alamat pengiriman.</p>
+      </section>
+
+      <!-- EMPTY CART -->
+      <section v-else-if="isCartEmpty && !orderCreated" class="checkout-empty">
         <ShoppingBag :size="45" />
+
         <h2>Keranjang masih kosong</h2>
+
         <p>Tambahkan produk terlebih dahulu sebelum melakukan checkout.</p>
+
         <RouterLink to="/katalog" class="primary-button">
           Jelajahi Produk
           <ArrowRight :size="17" />
@@ -126,8 +412,8 @@ const confirmOrder = () => {
       </section>
 
       <template v-else>
-        <!-- Progress -->
-        <div class="checkout-progress">
+        <!-- PROGRESS -->
+        <div v-if="!orderCreated" class="checkout-progress">
           <div class="progress-step completed">
             <span>1</span>
             <p>Keranjang</p>
@@ -137,7 +423,10 @@ const confirmOrder = () => {
 
           <div
             class="progress-step"
-            :class="{ completed: showReview, active: !showReview }"
+            :class="{
+              completed: showReview,
+              active: !showReview,
+            }"
           >
             <span>2</span>
             <p>Pengiriman</p>
@@ -151,274 +440,218 @@ const confirmOrder = () => {
           </div>
         </div>
 
-        <div v-if="notification" class="checkout-notification">
-          {{ notification }}
-        </div>
-
         <div class="checkout-layout">
-          <!-- Main Form -->
+          <!-- MAIN CONTENT -->
           <section class="checkout-form-section">
-            <template v-if="!showReview">
-              <form @submit.prevent="submitAddress">
-                <!-- Address -->
-                <div class="checkout-card">
-                  <div class="checkout-card-heading">
-                    <div class="heading-icon">
-                      <MapPin :size="20" />
-                    </div>
+            <!-- ================================= -->
+            <!-- SUCCESS ORDER -->
+            <!-- ================================= -->
 
-                    <div>
-                      <h2>Alamat Pengiriman</h2>
-                      <p>Masukkan alamat lengkap penerima pesanan.</p>
-                    </div>
+            <template v-if="orderCreated">
+              <div class="checkout-card order-success-card">
+                <div class="review-success-icon">
+                  <CheckCircle2 :size="30" />
+                </div>
+
+                <span class="success-eyebrow"> PESANAN BERHASIL DIBUAT </span>
+
+                <h2>Terima Kasih!</h2>
+
+                <p class="success-description">
+                  Pesananmu sudah berhasil disimpan. Selanjutnya seller akan
+                  mengonfirmasi biaya pengiriman.
+                </p>
+
+                <div class="order-number-box">
+                  <span>Nomor Pesanan</span>
+                  <strong>{{ createdOrderNumber }}</strong>
+                </div>
+
+                <div class="success-status">
+                  <div class="status-icon">
+                    <Truck :size="21" />
                   </div>
 
-                  <div class="form-grid">
-                    <div class="form-group full">
-                      <label for="recipient">Nama penerima *</label>
-                      <input
-                        id="recipient"
-                        v-model.trim="form.recipient"
-                        type="text"
-                        placeholder="Nama lengkap penerima"
-                        required
-                      />
-                    </div>
-
-                    <div class="form-group full">
-                      <label for="phone">Nomor telepon *</label>
-                      <input
-                        id="phone"
-                        v-model.trim="form.phone"
-                        type="tel"
-                        placeholder="Contoh: 081234567890"
-                        pattern="[0-9+ -]{9,16}"
-                        required
-                      />
-                    </div>
-
-                    <div class="form-group">
-                      <label for="province">Provinsi *</label>
-                      <input
-                        id="province"
-                        v-model.trim="form.province"
-                        type="text"
-                        placeholder="Nama provinsi"
-                        required
-                      />
-                    </div>
-
-                    <div class="form-group">
-                      <label for="city">Kota / Kabupaten *</label>
-                      <input
-                        id="city"
-                        v-model.trim="form.city"
-                        type="text"
-                        placeholder="Nama kota atau kabupaten"
-                        required
-                      />
-                    </div>
-
-                    <div class="form-group">
-                      <label for="district">Kecamatan *</label>
-                      <input
-                        id="district"
-                        v-model.trim="form.district"
-                        type="text"
-                        placeholder="Nama kecamatan"
-                        required
-                      />
-                    </div>
-
-                    <div class="form-group">
-                      <label for="postalCode">Kode pos *</label>
-                      <input
-                        id="postalCode"
-                        v-model.trim="form.postalCode"
-                        type="text"
-                        inputmode="numeric"
-                        pattern="[0-9]{5}"
-                        maxlength="5"
-                        placeholder="Contoh: 80225"
-                        required
-                      />
-                    </div>
-
-                    <div class="form-group full">
-                      <label for="address">Alamat lengkap *</label>
-                      <textarea
-                        id="address"
-                        v-model.trim="form.address"
-                        rows="4"
-                        placeholder="Nama jalan, nomor rumah, banjar, patokan, dan detail lainnya"
-                        required
-                      ></textarea>
-                    </div>
-
-                    <div class="form-group full">
-                      <label for="notes">
-                        Catatan untuk kurir
-                        <span>(Opsional)</span>
-                      </label>
-                      <textarea
-                        id="notes"
-                        v-model.trim="form.notes"
-                        rows="2"
-                        placeholder="Contoh: Rumah pagar hitam di sebelah minimarket."
-                      ></textarea>
-                    </div>
+                  <div>
+                    <strong>Menunggu Konfirmasi Ongkos Kirim</strong>
+                    <p>
+                      Seller sedang memeriksa pesanan dan menentukan biaya
+                      pengiriman.
+                    </p>
                   </div>
                 </div>
 
-                <!-- Shipping -->
-                <div class="checkout-card">
-                  <div class="checkout-card-heading">
-                    <div class="heading-icon">
-                      <Truck :size="20" />
-                    </div>
-
-                    <div>
-                      <h2>Metode Pengiriman</h2>
-                      <p>Pilih jenis pengiriman yang diinginkan.</p>
-                    </div>
+                <div class="success-status">
+                  <div class="status-icon">
+                    <CreditCard :size="21" />
                   </div>
 
-                  <div class="option-list">
-                    <label
-                      v-for="option in shippingOptions"
-                      :key="option.id"
-                      class="option-card"
-                      :class="{ selected: form.shipping === option.id }"
-                    >
-                      <input
-                        v-model="form.shipping"
-                        type="radio"
-                        :value="option.id"
-                        name="shipping"
-                      />
-
-                      <div class="option-content">
-                        <strong>{{ option.name }}</strong>
-                        <span>{{ option.description }}</span>
-                      </div>
-
-                      <span class="option-price"> Dihitung nanti </span>
-                    </label>
+                  <div>
+                    <strong>Pembayaran Belum Dilakukan</strong>
+                    <p>
+                      Kamu dapat melakukan pembayaran melalui QRIS atau transfer
+                      bank setelah ongkir seluruh seller dikonfirmasi.
+                    </p>
                   </div>
+                </div>
 
-                  <p class="form-info">
-                    Biaya pengiriman belum tersedia. Estimasi ongkir akan
-                    ditentukan setelah integrasi layanan kurir.
+                <div class="review-section">
+                  <strong>Alamat Pengiriman</strong>
+
+                  <p>
+                    {{ selectedAddress?.recipient_name }}
+                  </p>
+
+                  <p>
+                    {{ selectedAddress?.phone_number }}
+                  </p>
+
+                  <p>
+                    {{ formatAddress(selectedAddress) }}
                   </p>
                 </div>
 
-                <!-- Payment -->
-                <div class="checkout-card">
-                  <div class="checkout-card-heading">
-                    <div class="heading-icon">
-                      <CreditCard :size="20" />
-                    </div>
-
-                    <div>
-                      <h2>Metode Pembayaran</h2>
-                      <p>Pilih metode pembayaran yang diinginkan.</p>
-                    </div>
-                  </div>
-
-                  <div class="option-list">
-                    <label
-                      v-for="option in paymentOptions"
-                      :key="option.id"
-                      class="option-card"
-                      :class="{ selected: form.payment === option.id }"
-                    >
-                      <input
-                        v-model="form.payment"
-                        type="radio"
-                        :value="option.id"
-                        name="payment"
-                      />
-
-                      <div class="option-content">
-                        <strong>{{ option.name }}</strong>
-                        <span>{{ option.description }}</span>
-                      </div>
-                    </label>
-                  </div>
-
-                  <p class="form-info">
-                    Pilihan pembayaran ini masih berupa rancangan antarmuka.
-                    Belum ada transaksi atau pembayaran yang diproses.
-                  </p>
+                <div class="review-warning">
+                  Simpan nomor pesananmu untuk memudahkan pengecekan status
+                  pesanan berikutnya.
                 </div>
 
-                <button type="submit" class="primary-button form-submit">
-                  Periksa Pesanan
-                  <ArrowRight :size="18" />
-                </button>
-              </form>
+                <RouterLink to="/account" class="primary-button success-button">
+                  Kembali ke Akun Saya
+                  <ArrowRight :size="17" />
+                </RouterLink>
+              </div>
             </template>
 
-            <!-- Review -->
-            <template v-else>
+            <!-- ================================= -->
+            <!-- REVIEW ORDER -->
+            <!-- ================================= -->
+
+            <template v-else-if="showReview">
               <div class="checkout-card review-card">
                 <div class="review-success-icon">
                   <CheckCircle2 :size="30" />
                 </div>
 
                 <h2>Periksa Kembali Pesananmu</h2>
+
                 <p>
-                  Pastikan informasi penerima dan pilihan pengiriman sudah
+                  Pastikan informasi penerima dan produk yang akan dipesan sudah
                   benar.
                 </p>
 
+                <!-- ADDRESS REVIEW -->
                 <div class="review-section">
                   <div class="review-title">
                     <strong>Alamat Penerima</strong>
+
                     <button type="button" @click="editAddress">Ubah</button>
                   </div>
 
-                  <strong>{{ form.recipient }}</strong>
-                  <p>{{ form.phone }}</p>
-                  <p>
-                    {{ form.address }}, {{ form.district }}, {{ form.city }},
-                    {{ form.province }},
-                    {{ form.postalCode }}
-                  </p>
+                  <template v-if="selectedAddress">
+                    <div class="review-address-label">
+                      {{ selectedAddress.label || "Alamat Saya" }}
 
-                  <p v-if="form.notes">Catatan: {{ form.notes }}</p>
+                      <span v-if="selectedAddress.is_default">
+                        Alamat Utama
+                      </span>
+                    </div>
+
+                    <strong>
+                      {{ selectedAddress.recipient_name }}
+                    </strong>
+
+                    <p>{{ selectedAddress.phone_number }}</p>
+
+                    <p>
+                      {{ formatAddress(selectedAddress) }}
+                    </p>
+
+                    <p v-if="selectedAddress.address_notes">
+                      Catatan: {{ selectedAddress.address_notes }}
+                    </p>
+                  </template>
                 </div>
 
+                <!-- PRODUCT REVIEW -->
                 <div class="review-section">
-                  <div class="review-title">
-                    <strong>Pengiriman</strong>
-                    <button type="button" @click="editAddress">Ubah</button>
-                  </div>
+                  <strong>Produk yang Dipesan</strong>
 
-                  <strong>{{ selectedShipping?.name }}</strong>
-                  <p>{{ selectedShipping?.description }}</p>
-                  <p>Ongkos kirim belum dihitung.</p>
+                  <div
+                    v-for="item in cartStore.items"
+                    :key="item.id"
+                    class="review-product"
+                  >
+                    <img :src="item.image" :alt="item.name" />
+
+                    <div>
+                      <strong>{{ item.name }}</strong>
+                      <p>
+                        {{ item.quantity }} ×
+                        {{ formatCurrency(item.price) }}
+                      </p>
+                    </div>
+
+                    <strong>
+                      {{ formatCurrency(item.price * item.quantity) }}
+                    </strong>
+                  </div>
                 </div>
 
+                <!-- SHIPPING INFO -->
                 <div class="review-section">
-                  <div class="review-title">
-                    <strong>Pembayaran</strong>
-                    <button type="button" @click="editAddress">Ubah</button>
-                  </div>
+                  <strong>Pengiriman</strong>
 
-                  <strong>{{ selectedPayment?.name }}</strong>
-                  <p>{{ selectedPayment?.description }}</p>
+                  <div class="review-info-row">
+                    <Truck :size="20" />
+
+                    <div>
+                      <strong>Ditentukan oleh Seller</strong>
+
+                      <p>
+                        Masing-masing seller akan mengonfirmasi biaya pengiriman
+                        setelah pesanan dibuat.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- PAYMENT INFO -->
+                <div class="review-section">
+                  <strong>Pembayaran</strong>
+
+                  <div class="review-info-row">
+                    <CreditCard :size="20" />
+
+                    <div>
+                      <strong>QRIS atau Transfer Bank</strong>
+
+                      <p>
+                        Pilihan pembayaran akan tersedia setelah semua seller
+                        mengonfirmasi ongkos kirim.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- TOTAL -->
+                <div class="review-total">
+                  <span>Subtotal Produk</span>
+                  <strong>{{ formatCurrency(subtotal) }}</strong>
                 </div>
 
                 <div class="review-warning">
-                  Ini masih tahap pemeriksaan data. Pesanan belum disimpan ke
-                  database dan belum ada pembayaran yang dilakukan.
+                  Setelah menekan tombol Buat Pesanan, stok produk akan
+                  diperbarui dan pesanan akan disimpan ke database. Kamu belum
+                  perlu melakukan pembayaran sekarang.
                 </div>
 
+                <!-- ACTIONS -->
                 <div class="review-actions">
                   <button
                     type="button"
                     class="secondary-button"
+                    :disabled="submitting"
                     @click="editAddress"
                   >
                     <ArrowLeft :size="17" />
@@ -428,18 +661,207 @@ const confirmOrder = () => {
                   <button
                     type="button"
                     class="primary-button"
+                    :disabled="submitting"
                     @click="confirmOrder"
                   >
-                    Konfirmasi Data
-                    <ArrowRight :size="17" />
+                    <span v-if="submitting"> Membuat Pesanan... </span>
+
+                    <span v-else> Buat Pesanan </span>
+
+                    <ArrowRight v-if="!submitting" :size="17" />
                   </button>
                 </div>
               </div>
             </template>
+
+            <!-- ================================= -->
+            <!-- ADDRESS SELECTION -->
+            <!-- ================================= -->
+
+            <template v-else>
+              <form @submit.prevent="submitAddress">
+                <!-- ADDRESS CARD -->
+                <div class="checkout-card">
+                  <div class="checkout-card-heading">
+                    <div class="heading-icon">
+                      <MapPin :size="20" />
+                    </div>
+
+                    <div>
+                      <h2>Alamat Pengiriman</h2>
+                      <p>Pilih alamat yang sudah tersimpan di akunmu.</p>
+                    </div>
+                  </div>
+
+                  <!-- ADDRESS LOADING -->
+                  <div v-if="loadingAddresses" class="address-loading">
+                    Memuat alamat pengiriman...
+                  </div>
+
+                  <!-- ADDRESS ERROR -->
+                  <div v-else-if="addressError" class="address-empty">
+                    <MapPinned :size="32" />
+
+                    <h3>Alamat belum dapat dimuat</h3>
+
+                    <p>{{ addressError }}</p>
+
+                    <button
+                      type="button"
+                      class="secondary-button"
+                      @click="fetchAddresses"
+                    >
+                      Coba Lagi
+                    </button>
+                  </div>
+
+                  <!-- NO ADDRESS -->
+                  <div v-else-if="addresses.length === 0" class="address-empty">
+                    <MapPinned :size="35" />
+
+                    <h3>Belum ada alamat tersimpan</h3>
+
+                    <p>
+                      Tambahkan alamat pengiriman melalui halaman akun sebelum
+                      melanjutkan checkout.
+                    </p>
+
+                    <RouterLink to="/account" class="primary-button">
+                      <Plus :size="17" />
+                      Tambahkan Alamat
+                    </RouterLink>
+                  </div>
+
+                  <!-- ADDRESS LIST -->
+                  <div v-else class="address-list">
+                    <label
+                      v-for="address in addresses"
+                      :key="address.id"
+                      class="address-option"
+                      :class="{
+                        selected: selectedAddressId === address.id,
+                      }"
+                    >
+                      <input
+                        type="radio"
+                        name="delivery-address"
+                        :value="address.id"
+                        :checked="selectedAddressId === address.id"
+                        @change="selectAddress(address.id)"
+                      />
+
+                      <div class="address-option-content">
+                        <div class="address-option-header">
+                          <strong>
+                            {{ address.label || "Alamat Saya" }}
+                          </strong>
+
+                          <span
+                            v-if="address.is_default"
+                            class="default-address-badge"
+                          >
+                            Utama
+                          </span>
+                        </div>
+
+                        <strong class="address-recipient">
+                          {{ address.recipient_name }}
+                        </strong>
+
+                        <span class="address-phone">
+                          {{ address.phone_number }}
+                        </span>
+
+                        <p>{{ formatAddress(address) }}</p>
+
+                        <span
+                          v-if="address.address_notes"
+                          class="address-notes"
+                        >
+                          Catatan: {{ address.address_notes }}
+                        </span>
+                      </div>
+                    </label>
+
+                    <RouterLink to="/account" class="manage-address-link">
+                      <Plus :size="16" />
+                      Kelola atau tambah alamat
+                    </RouterLink>
+                  </div>
+                </div>
+
+                <!-- SHIPPING AND PAYMENT INFORMATION -->
+                <div class="checkout-card">
+                  <div class="checkout-card-heading">
+                    <div class="heading-icon">
+                      <Truck :size="20" />
+                    </div>
+
+                    <div>
+                      <h2>Pengiriman dan Pembayaran</h2>
+
+                      <p>Informasi tahap selanjutnya setelah pesanan dibuat.</p>
+                    </div>
+                  </div>
+
+                  <div class="checkout-process-info">
+                    <div class="process-info-item">
+                      <span class="process-number">1</span>
+
+                      <div>
+                        <strong>Konfirmasi Ongkos Kirim</strong>
+
+                        <p>
+                          Setiap seller akan menentukan biaya pengiriman
+                          berdasarkan pesanan yang diterima.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div class="process-info-item">
+                      <span class="process-number">2</span>
+
+                      <div>
+                        <strong>Pembayaran Pesanan</strong>
+
+                        <p>
+                          Setelah seluruh seller mengonfirmasi ongkir, kamu
+                          dapat membayar melalui QRIS atau transfer bank.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div class="process-info-item">
+                      <span class="process-number">3</span>
+
+                      <div>
+                        <strong>Verifikasi Pembayaran</strong>
+
+                        <p>
+                          Unggah bukti pembayaran untuk diperiksa oleh seller.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  class="primary-button form-submit"
+                  :disabled="loadingAddresses || addresses.length === 0"
+                >
+                  Periksa Pesanan
+                  <ArrowRight :size="18" />
+                </button>
+              </form>
+            </template>
           </section>
 
-          <!-- Order Summary -->
-          <aside class="checkout-summary">
+          <!-- ================================= -->
+          <!-- ORDER SUMMARY -->
+          <!-- ================================= -->
+
+          <aside v-if="!orderCreated" class="checkout-summary">
             <h2>Ringkasan Pesanan</h2>
 
             <div class="summary-products">
@@ -452,10 +874,11 @@ const confirmOrder = () => {
 
                 <div class="summary-product-info">
                   <strong>{{ item.name }}</strong>
-                  <span
-                    >{{ item.quantity }} ×
-                    {{ formatCurrency(item.price) }}</span
-                  >
+
+                  <span>
+                    {{ item.quantity }} ×
+                    {{ formatCurrency(item.price) }}
+                  </span>
                 </div>
 
                 <strong class="summary-product-total">
@@ -468,7 +891,7 @@ const confirmOrder = () => {
 
             <div class="summary-row">
               <span>Total produk</span>
-              <strong>{{ cartStore.totalItems }}</strong>
+              <strong>{{ totalItems }}</strong>
             </div>
 
             <div class="summary-row">
@@ -478,24 +901,30 @@ const confirmOrder = () => {
 
             <div class="summary-row">
               <span>Ongkos kirim</span>
-              <span class="pending-text">Belum dihitung</span>
+              <span class="pending-text"> Belum dihitung </span>
             </div>
 
             <div class="summary-divider"></div>
 
             <div class="summary-total">
               <span>Total sementara</span>
-              <strong>{{ formatCurrency(subtotal) }}</strong>
+
+              <strong>
+                {{ formatCurrency(subtotal) }}
+              </strong>
             </div>
 
             <p class="summary-note">
-              Total akhir akan diperbarui setelah biaya pengiriman dan
-              pembayaran terintegrasi.
+              Total akhir akan diperbarui setelah seluruh seller mengonfirmasi
+              biaya pengiriman.
             </p>
 
             <div class="secure-info">
               <ShieldCheck :size="20" />
-              <span>Informasi pesanan ditampilkan untuk pemeriksaan.</span>
+
+              <span>
+                Transaksi diproses melalui sistem pesanan KriyaLoka.
+              </span>
             </div>
 
             <RouterLink to="/keranjang" class="back-to-cart">
@@ -522,6 +951,8 @@ const confirmOrder = () => {
   margin: 0 auto;
 }
 
+/* BREADCRUMB */
+
 .checkout-breadcrumb {
   display: flex;
   flex-wrap: wrap;
@@ -535,6 +966,8 @@ const confirmOrder = () => {
   color: #943c14;
   text-decoration: none;
 }
+
+/* HEADING */
 
 .checkout-heading {
   margin-bottom: 30px;
@@ -559,7 +992,8 @@ const confirmOrder = () => {
   font-size: 14px;
 }
 
-/* Progress */
+/* PROGRESS */
+
 .checkout-progress {
   display: flex;
   max-width: 600px;
@@ -612,7 +1046,8 @@ const confirmOrder = () => {
   background: #dfd2c5;
 }
 
-/* Layout */
+/* LAYOUT */
+
 .checkout-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 370px;
@@ -662,120 +1097,7 @@ const confirmOrder = () => {
   font-size: 12px;
 }
 
-/* Form */
-.form-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 18px;
-}
-
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.form-group.full {
-  grid-column: 1 / -1;
-}
-
-.form-group label {
-  color: #514438;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.form-group label span {
-  color: #a29487;
-  font-weight: 400;
-}
-
-.form-group input,
-.form-group textarea {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 13px 14px;
-  border: 1px solid #e4d9ce;
-  border-radius: 8px;
-  outline: none;
-  background: #fff;
-  color: #302820;
-  font: inherit;
-  font-size: 13px;
-  transition: border-color 0.2s;
-}
-
-.form-group input:focus,
-.form-group textarea:focus {
-  border-color: #a65b36;
-}
-
-.form-group textarea {
-  resize: vertical;
-  line-height: 1.6;
-}
-
-.form-group input::placeholder,
-.form-group textarea::placeholder {
-  color: #b5a99e;
-}
-
-/* Options */
-.option-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.option-card {
-  display: flex;
-  align-items: center;
-  gap: 13px;
-  padding: 16px;
-  border: 1px solid #e8ded4;
-  border-radius: 9px;
-  cursor: pointer;
-  transition:
-    border-color 0.2s,
-    background 0.2s;
-}
-
-.option-card.selected {
-  border-color: #a65b36;
-  background: #fbf3ed;
-}
-
-.option-card input {
-  accent-color: #943c14;
-}
-
-.option-content {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.option-content strong {
-  font-size: 13px;
-}
-
-.option-content span {
-  color: #94877b;
-  font-size: 11px;
-}
-
-.option-price {
-  color: #a35b37;
-  font-size: 11px;
-}
-
-.form-info {
-  margin: 15px 0 0;
-  color: #938679;
-  font-size: 11px;
-  line-height: 1.7;
-}
+/* BUTTONS */
 
 .primary-button,
 .secondary-button {
@@ -791,6 +1113,7 @@ const confirmOrder = () => {
   font-weight: 700;
   text-decoration: none;
   cursor: pointer;
+  transition: 0.2s ease;
 }
 
 .primary-button {
@@ -802,8 +1125,10 @@ const confirmOrder = () => {
   background: #74300f;
 }
 
-.form-submit {
-  width: 100%;
+.primary-button:disabled,
+.secondary-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .secondary-button {
@@ -812,7 +1137,193 @@ const confirmOrder = () => {
   color: #725e4c;
 }
 
-/* Summary */
+.form-submit {
+  width: 100%;
+}
+
+/* ADDRESS */
+
+.address-loading {
+  padding: 30px 15px;
+  color: #94877b;
+  font-size: 13px;
+  text-align: center;
+}
+
+.address-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 35px 20px;
+  border: 1px dashed #dfd1c3;
+  border-radius: 10px;
+  background: #fdf9f4;
+  color: #a65b36;
+  text-align: center;
+}
+
+.address-empty h3 {
+  margin: 15px 0 7px;
+  color: #302820;
+  font-size: 15px;
+}
+
+.address-empty p {
+  max-width: 390px;
+  margin: 0 0 18px;
+  color: #94877b;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.address-list {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+.address-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  padding: 17px;
+  border: 1px solid #e8ded4;
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+  transition: 0.2s ease;
+}
+
+.address-option:hover {
+  border-color: #c69b7c;
+}
+
+.address-option.selected {
+  border-color: #a65b36;
+  background: #fbf3ed;
+}
+
+.address-option input {
+  margin-top: 4px;
+  accent-color: #943c14;
+}
+
+.address-option-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.address-option-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 12px;
+}
+
+.address-option-header > strong {
+  color: #943c14;
+  font-size: 13px;
+}
+
+.default-address-badge {
+  padding: 4px 8px;
+  border-radius: 20px;
+  background: #e8f1e9;
+  color: #28613e;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.address-recipient {
+  display: block;
+  color: #302820;
+  font-size: 13px;
+}
+
+.address-phone {
+  display: block;
+  margin-top: 5px;
+  color: #85796e;
+  font-size: 12px;
+}
+
+.address-option-content p {
+  margin: 9px 0 0;
+  color: #72665b;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.address-notes {
+  display: block;
+  margin-top: 8px;
+  color: #94877b;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.manage-address-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  align-self: flex-start;
+  margin-top: 7px;
+  color: #943c14;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.manage-address-link:hover {
+  color: #74300f;
+}
+
+/* SHIPPING AND PAYMENT INFORMATION */
+
+.checkout-process-info {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+.process-info-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  padding: 15px;
+  border: 1px solid #e9dfd5;
+  border-radius: 9px;
+  background: #fdf9f4;
+}
+
+.process-number {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 50%;
+  background: #f1e3d8;
+  color: #943c14;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.process-info-item strong {
+  color: #49372a;
+  font-size: 13px;
+}
+
+.process-info-item p {
+  margin: 7px 0 0;
+  color: #897c70;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+/* SUMMARY */
+
 .checkout-summary {
   position: sticky;
   top: 25px;
@@ -841,6 +1352,7 @@ const confirmOrder = () => {
   height: 58px;
   border-radius: 7px;
   object-fit: cover;
+  background: #f5eee7;
 }
 
 .summary-product-info {
@@ -938,7 +1450,8 @@ const confirmOrder = () => {
   text-decoration: none;
 }
 
-/* Review */
+/* REVIEW */
+
 .review-card {
   text-align: left;
 }
@@ -976,7 +1489,8 @@ const confirmOrder = () => {
   margin-bottom: 13px;
 }
 
-.review-title strong {
+.review-title strong,
+.review-section > strong {
   font-size: 13px;
 }
 
@@ -988,15 +1502,104 @@ const confirmOrder = () => {
   cursor: pointer;
 }
 
-.review-section > strong {
-  font-size: 13px;
-}
-
 .review-section p {
   margin: 7px 0 0;
   color: #817568;
   font-size: 12px;
   line-height: 1.7;
+}
+
+.review-address-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  color: #943c14;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.review-address-label span {
+  padding: 4px 7px;
+  border-radius: 15px;
+  background: #e8f1e9;
+  color: #28613e;
+  font-size: 10px;
+}
+
+/* REVIEW PRODUCTS */
+
+.review-product {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-top: 15px;
+}
+
+.review-product img {
+  width: 52px;
+  height: 52px;
+  border-radius: 7px;
+  object-fit: cover;
+  background: #f5eee7;
+}
+
+.review-product > div {
+  min-width: 0;
+}
+
+.review-product > div strong {
+  font-size: 12px;
+}
+
+.review-product > div p {
+  font-size: 11px;
+}
+
+.review-product > strong {
+  font-size: 12px;
+}
+
+/* REVIEW INFORMATION */
+
+.review-info-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 14px;
+  color: #943c14;
+}
+
+.review-info-row div {
+  flex: 1;
+}
+
+.review-info-row strong {
+  color: #49372a;
+  font-size: 12px;
+}
+
+.review-info-row p {
+  margin: 6px 0 0;
+  color: #897c70;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.review-total {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid #eee5dc;
+  font-size: 13px;
+}
+
+.review-total strong {
+  color: #943c14;
+  font-size: 17px;
 }
 
 .review-warning {
@@ -1016,18 +1619,103 @@ const confirmOrder = () => {
   margin-top: 22px;
 }
 
-.checkout-notification {
-  margin-bottom: 20px;
-  padding: 15px;
-  border: 1px solid #ead5bd;
-  border-radius: 9px;
-  background: #fbf0e5;
-  color: #87522e;
-  font-size: 12px;
+.review-actions > button {
+  flex: 1;
+}
+
+/* SUCCESS */
+
+.order-success-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.success-eyebrow {
+  margin-top: 10px;
+  color: #28613e;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+}
+
+.order-success-card h2 {
+  margin: 8px 0;
+  font-size: 27px;
+}
+
+.success-description {
+  color: #817568;
+  font-size: 13px;
   line-height: 1.7;
 }
 
-/* Empty Cart */
+.order-number-box {
+  display: flex;
+  width: 100%;
+  box-sizing: border-box;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 18px;
+  padding: 17px;
+  border: 1px dashed #cba98f;
+  border-radius: 9px;
+  background: #fbf3ed;
+}
+
+.order-number-box span {
+  color: #897c70;
+  font-size: 11px;
+}
+
+.order-number-box strong {
+  color: #943c14;
+  font-size: 17px;
+  overflow-wrap: anywhere;
+}
+
+.success-status {
+  display: flex;
+  width: 100%;
+  box-sizing: border-box;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 15px;
+  padding: 15px;
+  border: 1px solid #e9dfd5;
+  border-radius: 9px;
+  background: #fdf9f4;
+}
+
+.status-icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 9px;
+  background: #f1e3d8;
+  color: #943c14;
+}
+
+.success-status strong {
+  color: #49372a;
+  font-size: 12px;
+}
+
+.success-status p {
+  margin: 6px 0 0;
+  color: #897c70;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.success-button {
+  margin-top: 20px;
+}
+
+/* EMPTY CART */
+
 .checkout-empty {
   display: flex;
   flex-direction: column;
@@ -1050,6 +1738,26 @@ const confirmOrder = () => {
   color: #94877b;
   font-size: 13px;
 }
+
+/* LOADING */
+
+.checkout-loading-spinner {
+  width: 34px;
+  height: 34px;
+  margin-bottom: 15px;
+  border: 3px solid #e7ddcf;
+  border-top-color: #943c14;
+  border-radius: 50%;
+  animation: checkout-spin 0.8s linear infinite;
+}
+
+@keyframes checkout-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* RESPONSIVE */
 
 @media (max-width: 900px) {
   .checkout-layout {
@@ -1075,14 +1783,6 @@ const confirmOrder = () => {
     padding: 18px;
   }
 
-  .form-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .form-group.full {
-    grid-column: auto;
-  }
-
   .checkout-progress {
     margin-bottom: 25px;
   }
@@ -1096,8 +1796,21 @@ const confirmOrder = () => {
     flex-direction: column;
   }
 
-  .review-actions button {
+  .review-actions > button {
     width: 100%;
+  }
+
+  .review-product {
+    grid-template-columns: 45px minmax(0, 1fr);
+  }
+
+  .review-product img {
+    width: 45px;
+    height: 45px;
+  }
+
+  .review-product > strong {
+    grid-column: 2;
   }
 }
 </style>

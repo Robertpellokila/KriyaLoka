@@ -1,701 +1,854 @@
 <script setup>
-import { computed, ref, watch } from "vue";
-import { useRoute, useRouter, RouterLink } from "vue-router";
+import { ref, computed, onMounted } from "vue";
+import { RouterLink } from "vue-router";
 import {
   Search,
   SlidersHorizontal,
+  ShoppingBag,
   ArrowUpDown,
-  X,
   PackageOpen,
 } from "lucide-vue-next";
 
-import ProductCard from "../components/product/ProductCard.vue";
-import { products, categories } from "../data/products.js";
+import { useProductStore } from "@/stores/product.js";
+import { useCartStore } from "@/stores/cart.js";
+import AppToast from "@/components/ui/AppToast.vue";
 
-const route = useRoute();
-const router = useRouter();
+const productStore = useProductStore();
+const cartStore = useCartStore();
 
-const searchInput = ref(route.query.q || "");
-const selectedCategory = ref(route.query.kategori || "");
-const sortBy = ref("popular");
-const onlyDiscount = ref(false);
+const searchQuery = ref("");
+const selectedCategory = ref("Semua");
+const sortBy = ref("newest");
+const loading = ref(false);
 
-const currentPage = ref(1);
-const itemsPerPage = 8;
+const toast = ref({
+  visible: false,
+  type: "success",
+  title: "",
+  message: "",
+});
 
-// Sinkronisasi jika URL berubah dari luar halaman katalog.
-watch(
-  () => route.query,
-  (query) => {
-    searchInput.value = query.q || "";
-    selectedCategory.value = query.kategori || "";
-    currentPage.value = 1;
-  },
-);
+function showToast(type, title, message) {
+  toast.value = {
+    visible: true,
+    type,
+    title,
+    message,
+  };
+}
 
-const applySearch = () => {
-  router.push({
-    path: "/katalog",
-    query: {
-      ...(searchInput.value.trim() ? { q: searchInput.value.trim() } : {}),
-      ...(selectedCategory.value ? { kategori: selectedCategory.value } : {}),
-    },
-  });
+const products = computed(() => productStore.publicProducts || []);
 
-  currentPage.value = 1;
-};
+const categories = computed(() => {
+  const uniqueCategories = [
+    ...new Set(
+      products.value.map((product) => product.category).filter(Boolean),
+    ),
+  ];
+
+  return ["Semua", ...uniqueCategories];
+});
 
 const filteredProducts = computed(() => {
-  let result = [...products];
+  let result = [...products.value];
 
-  const keyword = String(searchInput.value || "")
-    .toLowerCase()
-    .trim();
+  const keyword = searchQuery.value.trim().toLowerCase();
 
   if (keyword) {
     result = result.filter((product) => {
       return (
-        product.name.toLowerCase().includes(keyword) ||
-        product.artisan.toLowerCase().includes(keyword) ||
-        product.category.toLowerCase().includes(keyword) ||
-        product.location.toLowerCase().includes(keyword)
+        product.name?.toLowerCase().includes(keyword) ||
+        product.description?.toLowerCase().includes(keyword) ||
+        product.category?.toLowerCase().includes(keyword)
       );
     });
   }
 
-  if (selectedCategory.value) {
-    const category = categories.find(
-      (item) => item.slug === selectedCategory.value,
-    );
-
-    if (category) {
-      result = result.filter((product) => product.category === category.name);
-    }
-  }
-
-  if (onlyDiscount.value) {
+  if (selectedCategory.value !== "Semua") {
     result = result.filter(
-      (product) =>
-        product.originalPrice && product.originalPrice > product.price,
+      (product) => product.category === selectedCategory.value,
     );
   }
 
   if (sortBy.value === "price-low") {
-    result.sort((a, b) => a.price - b.price);
+    result.sort((a, b) => Number(a.price) - Number(b.price));
   } else if (sortBy.value === "price-high") {
-    result.sort((a, b) => b.price - a.price);
-  } else if (sortBy.value === "rating") {
-    result.sort((a, b) => b.rating - a.rating);
-  } else if (sortBy.value === "popular") {
-    result.sort((a, b) => b.sold - a.sold);
+    result.sort((a, b) => Number(b.price) - Number(a.price));
+  } else if (sortBy.value === "name") {
+    result.sort((a, b) => (a.name || "").localeCompare(b.name || "", "id"));
+  } else {
+    result.sort(
+      (a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0),
+    );
   }
 
   return result;
 });
 
-const totalPages = computed(() =>
-  Math.ceil(filteredProducts.value.length / itemsPerPage),
-);
+function getProductImage(product) {
+  return (
+    product.product_images?.[0]?.image_url ||
+    "https://placehold.co/600x600/F3EBDD/943C14?text=KriyaLoka"
+  );
+}
 
-const paginatedProducts = computed(() => {
-  const start = (currentPage.value - 1) * itemsPerPage;
+function formatPrice(price) {
+  return new Intl.NumberFormat("id-ID", {
+    style: "currency",
+    currency: "IDR",
+    maximumFractionDigits: 0,
+  }).format(Number(price || 0));
+}
 
-  return filteredProducts.value.slice(start, start + itemsPerPage);
-});
+async function addToCart(product) {
+  if (!product || product.status !== "published") {
+    showToast(
+      "error",
+      "Produk tidak tersedia",
+      "Produk ini belum tersedia untuk dibeli.",
+    );
+    return;
+  }
 
-const changePage = (page) => {
-  if (page < 1 || page > totalPages.value) return;
-  currentPage.value = page;
-  window.scrollTo({ top: 0, behavior: "smooth" });
-};
+  if (Number(product.stock) <= 0) {
+    showToast("error", "Stok habis", "Maaf, produk ini sedang kehabisan stok.");
+    return;
+  }
 
-const clearFilters = () => {
-  searchInput.value = "";
-  selectedCategory.value = "";
-  sortBy.value = "popular";
-  onlyDiscount.value = false;
-  currentPage.value = 1;
-
-  router.push("/katalog");
-};
-
-const formatCategory = computed(() => {
-  const category = categories.find(
-    (item) => item.slug === selectedCategory.value,
+  const result = await cartStore.addItem(
+    {
+      id: product.id,
+      name: product.name,
+      artisan: product.artisan || product.store_name || "Pengrajin KriyaLoka",
+      image: getProductImage(product),
+      price: Number(product.price),
+      stock: Number(product.stock),
+    },
+    1,
   );
 
-  return category?.name || "Semua Produk";
-});
+  showToast(
+    result.success ? "success" : "error",
+    result.success ? "Berhasil ditambahkan" : "Gagal menambahkan produk",
+    result.message,
+  );
+}
+
+async function loadProducts() {
+  loading.value = true;
+
+  try {
+    await productStore.fetchPublicProducts({ limit: 100 });
+  } catch (error) {
+    console.error("Gagal memuat katalog:", error);
+    showToast(
+      "error",
+      "Gagal memuat katalog",
+      error.message || "Silakan coba beberapa saat lagi.",
+    );
+  } finally {
+    loading.value = false;
+  }
+}
+
+onMounted(loadProducts);
 </script>
 
 <template>
-  <main class="catalog-page">
-    <!-- PAGE HEADER -->
+  <div class="catalog-page">
+    <AppToast
+      v-model="toast.visible"
+      :type="toast.type"
+      :title="toast.title"
+      :message="toast.message"
+      :duration="3500"
+    />
+
     <section class="catalog-hero">
-      <div class="catalog-container">
-        <div class="breadcrumb">
-          <RouterLink to="/">Beranda</RouterLink>
-          <span>/</span>
-          <span>Katalog Produk</span>
-        </div>
-
-        <span class="section-eyebrow">KOLEKSI KRIYALOKA</span>
-
-        <h1>Jelajahi Karya Lokal</h1>
-
+      <div class="hero-content">
+        <span class="eyebrow">KARYA LOKAL, CERITA ISTIMEWA</span>
+        <h1>Temukan karya yang punya <em>cerita.</em></h1>
         <p>
-          Temukan berbagai produk kerajinan unik dari pengrajin kreatif di
-          seluruh Bali.
+          Jelajahi berbagai produk kerajinan pilihan dari tangan-tangan kreatif
+          pengrajin lokal Indonesia.
         </p>
+        <a href="#product-list" class="hero-link">
+          Jelajahi koleksi
+          <span>↓</span>
+        </a>
+      </div>
 
-        <form class="catalog-search" @submit.prevent="applySearch">
-          <Search :size="20" />
-
-          <input
-            v-model="searchInput"
-            type="search"
-            placeholder="Cari produk, kategori, atau pengrajin..."
-          />
-
-          <button type="submit">Cari Produk</button>
-        </form>
+      <div class="hero-decoration">
+        <div class="decoration-circle circle-one"></div>
+        <div class="decoration-circle circle-two"></div>
+        <div class="decoration-label">Made with<br />heart & craft</div>
       </div>
     </section>
 
-    <!-- CATALOG CONTENT -->
-    <section class="catalog-content">
-      <div class="catalog-container">
-        <div class="catalog-layout">
-          <!-- SIDEBAR FILTER -->
-          <aside class="filter-sidebar">
-            <div class="filter-heading">
-              <div>
-                <SlidersHorizontal :size="18" />
-                <h2>Filter Produk</h2>
-              </div>
+    <section class="catalog-container" id="product-list">
+      <div class="catalog-heading">
+        <div>
+          <span class="section-eyebrow">KOLEKSI KRIYALOKA</span>
+          <h2>Jelajahi Produk</h2>
+          <p>Temukan sesuatu yang istimewa untukmu.</p>
+        </div>
 
-              <button class="clear-button" @click="clearFilters">Reset</button>
-            </div>
+        <div class="product-count">
+          <strong>{{ filteredProducts.length }}</strong>
+          <span>produk ditemukan</span>
+        </div>
+      </div>
 
-            <div class="filter-group">
-              <h3>Kategori</h3>
+      <div class="catalog-toolbar">
+        <div class="search-box">
+          <Search :size="19" />
+          <input
+            v-model="searchQuery"
+            type="search"
+            placeholder="Cari produk atau kerajinan..."
+          />
+        </div>
 
-              <label class="category-option">
-                <input
-                  v-model="selectedCategory"
-                  type="radio"
-                  value=""
-                  @change="applySearch"
-                />
-                <span>Semua Produk</span>
-              </label>
+        <div class="sort-box">
+          <ArrowUpDown :size="17" />
+          <select v-model="sortBy">
+            <option value="newest">Terbaru</option>
+            <option value="price-low">Harga terendah</option>
+            <option value="price-high">Harga tertinggi</option>
+            <option value="name">Nama produk</option>
+          </select>
+        </div>
+      </div>
 
-              <label
-                v-for="category in categories"
-                :key="category.id"
-                class="category-option"
-              >
-                <input
-                  v-model="selectedCategory"
-                  type="radio"
-                  :value="category.slug"
-                  @change="applySearch"
-                />
+      <div class="category-list">
+        <button
+          v-for="category in categories"
+          :key="category"
+          type="button"
+          class="category-button"
+          :class="{ active: selectedCategory === category }"
+          @click="selectedCategory = category"
+        >
+          {{ category }}
+        </button>
+      </div>
 
-                <span>{{ category.name }}</span>
-              </label>
-            </div>
+      <div v-if="loading" class="loading-state">
+        <div class="loading-spinner"></div>
+        <p>Sedang menyiapkan koleksi terbaik...</p>
+      </div>
 
-            <div class="filter-group">
-              <h3>Penawaran</h3>
-
-              <label class="discount-option">
-                <input v-model="onlyDiscount" type="checkbox" />
-                <span>Produk diskon</span>
-              </label>
-            </div>
-
-            <button class="reset-filter" @click="clearFilters">
-              <X :size="15" />
-              Hapus semua filter
-            </button>
-          </aside>
-
-          <!-- PRODUCT AREA -->
-          <div class="catalog-main">
-            <div class="catalog-toolbar">
-              <div class="catalog-result">
-                <h2>{{ formatCategory }}</h2>
-                <p>Menampilkan {{ filteredProducts.length }} produk</p>
-              </div>
-
-              <div class="sort-control">
-                <ArrowUpDown :size="16" />
-
-                <select v-model="sortBy">
-                  <option value="popular">Paling Populer</option>
-                  <option value="price-low">Harga Terendah</option>
-                  <option value="price-high">Harga Tertinggi</option>
-                  <option value="rating">Rating Tertinggi</option>
-                </select>
-              </div>
-            </div>
-
-            <!-- ACTIVE FILTERS -->
-            <div
-              v-if="selectedCategory || onlyDiscount || searchInput"
-              class="active-filters"
-            >
-              <span>Filter aktif:</span>
-
-              <span v-if="selectedCategory" class="filter-chip">
-                {{ formatCategory }}
-              </span>
-
-              <span v-if="onlyDiscount" class="filter-chip"> Diskon </span>
-
-              <span v-if="searchInput" class="filter-chip">
-                "{{ searchInput }}"
-              </span>
-
-              <button @click="clearFilters">Hapus semua</button>
-            </div>
-
-            <!-- PRODUCTS -->
-            <div v-if="paginatedProducts.length" class="product-grid">
-              <ProductCard
-                v-for="product in paginatedProducts"
-                :key="product.id"
-                :product="product"
+      <div v-else-if="filteredProducts.length" class="product-grid">
+        <article
+          v-for="product in filteredProducts"
+          :key="product.id"
+          class="product-card"
+        >
+          <RouterLink
+            :to="{ name: 'product-detail', params: { id: product.id } }"
+            class="product-image-link"
+          >
+            <div class="product-image">
+              <img
+                :src="getProductImage(product)"
+                :alt="product.name"
+                loading="lazy"
               />
-            </div>
 
-            <!-- EMPTY STATE -->
-            <div v-else class="empty-state">
-              <div class="empty-icon">
-                <PackageOpen :size="35" />
+              <span class="product-category">
+                {{ product.category || "Kerajinan" }}
+              </span>
+            </div>
+          </RouterLink>
+
+          <div class="product-info">
+            <span class="artisan-name">
+              {{ product.artisan || product.store_name || "Pengrajin Lokal" }}
+            </span>
+
+            <RouterLink
+              :to="{ name: 'product-detail', params: { id: product.id } }"
+              class="product-name"
+            >
+              {{ product.name }}
+            </RouterLink>
+
+            <div class="product-bottom">
+              <div>
+                <strong class="product-price">
+                  {{ formatPrice(product.price) }}
+                </strong>
+                <span class="stock-info"> Stok {{ product.stock }} </span>
               </div>
 
-              <h3>Produk tidak ditemukan</h3>
-
-              <p>Coba gunakan kata kunci lain atau ubah filter pencarianmu.</p>
-
-              <button @click="clearFilters">Lihat Semua Produk</button>
-            </div>
-
-            <!-- PAGINATION -->
-            <div v-if="totalPages > 1" class="pagination">
               <button
-                :disabled="currentPage === 1"
-                @click="changePage(currentPage - 1)"
+                type="button"
+                class="add-cart-button"
+                title="Tambah ke keranjang"
+                :disabled="Number(product.stock) <= 0"
+                @click="addToCart(product)"
               >
-                Sebelumnya
-              </button>
-
-              <button
-                v-for="page in totalPages"
-                :key="page"
-                :class="{ active: currentPage === page }"
-                @click="changePage(page)"
-              >
-                {{ page }}
-              </button>
-
-              <button
-                :disabled="currentPage === totalPages"
-                @click="changePage(currentPage + 1)"
-              >
-                Selanjutnya
+                <ShoppingBag :size="18" />
               </button>
             </div>
           </div>
+        </article>
+      </div>
+
+      <div v-else class="empty-state">
+        <div class="empty-icon">
+          <PackageOpen :size="34" />
         </div>
+        <h3>Produk belum ditemukan</h3>
+        <p>Coba gunakan kata kunci lain atau pilih kategori yang berbeda.</p>
+        <button
+          type="button"
+          @click="
+            searchQuery = '';
+            selectedCategory = 'Semua';
+          "
+        >
+          Reset pencarian
+        </button>
       </div>
     </section>
-  </main>
+
+    <section class="catalog-bottom">
+      <div>
+        <span class="section-eyebrow">DUKUNG KARYA LOKAL</span>
+        <h2>Setiap karya punya cerita. Jadilah bagian darinya.</h2>
+      </div>
+      <RouterLink to="/" class="bottom-link"> Kembali ke Beranda </RouterLink>
+    </section>
+  </div>
 </template>
 
 <style scoped>
 .catalog-page {
-  color: #3e3028;
-  background: #fbf7f2;
+  background: #faf7f0;
+  color: #30291f;
+  min-height: 100vh;
+  padding-bottom: 70px;
 }
 
-.catalog-container {
-  width: 100%;
-  max-width: 1180px;
-  margin: 0 auto;
-}
-
-/* HERO */
 .catalog-hero {
-  padding: 45px 24px 55px;
-  background: #f3e9dc;
-  text-align: center;
-}
-
-.breadcrumb {
+  min-height: 390px;
+  padding: 75px max(7%, calc((100% - 1200px) / 2));
+  background: #efe5d4;
   display: flex;
-  justify-content: center;
-  gap: 10px;
-  margin-bottom: 35px;
-  color: #968579;
-  font-size: 11px;
+  align-items: center;
+  justify-content: space-between;
+  position: relative;
+  overflow: hidden;
 }
 
-.breadcrumb a {
-  color: #943c14;
-  text-decoration: none;
+.hero-content {
+  max-width: 590px;
+  position: relative;
+  z-index: 2;
 }
 
+.eyebrow,
 .section-eyebrow {
   color: #943c14;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 800;
-  letter-spacing: 1.5px;
+  letter-spacing: 2px;
 }
 
-.catalog-hero h1 {
-  margin: 13px 0;
+.hero-content h1 {
   font-family: Georgia, serif;
-  font-size: clamp(34px, 5vw, 49px);
-  font-weight: 600;
+  font-size: clamp(40px, 5vw, 65px);
+  line-height: 1.08;
+  font-weight: 500;
+  margin: 20px 0;
+  letter-spacing: -2px;
 }
 
-.catalog-hero p {
-  color: #837469;
-  font-size: 13px;
-  line-height: 1.7;
-}
-
-.catalog-search {
-  display: flex;
-  align-items: center;
-  gap: 13px;
-  max-width: 650px;
-  height: 58px;
-  margin: 30px auto 0;
-  padding: 7px 8px 7px 18px;
-  color: #998b7e;
-  background: #fff;
-  border: 1px solid #e9ddd0;
-  border-radius: 12px;
-  box-shadow: 0 8px 25px rgba(75, 47, 30, 0.06);
-}
-
-.catalog-search input {
-  flex: 1;
-  width: 0;
-  height: 100%;
-  color: #49382d;
-  background: transparent;
-  border: none;
-  outline: none;
-  font: inherit;
-  font-size: 12px;
-}
-
-.catalog-search button {
-  height: 42px;
-  padding: 0 19px;
-  color: #fff;
-  background: #943c14;
-  border: none;
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-/* MAIN */
-.catalog-content {
-  padding: 55px 24px 85px;
-}
-
-.catalog-layout {
-  display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
-  align-items: start;
-  gap: 30px;
-}
-
-/* SIDEBAR */
-.filter-sidebar {
-  padding: 22px;
-  background: #fff;
-  border: 1px solid #e8dfd6;
-  border-radius: 14px;
-}
-
-.filter-heading,
-.filter-heading > div {
-  display: flex;
-  align-items: center;
-}
-
-.filter-heading {
-  justify-content: space-between;
-  gap: 10px;
-  padding-bottom: 19px;
-  border-bottom: 1px solid #eee7e0;
-}
-
-.filter-heading > div {
-  gap: 9px;
+.hero-content h1 em {
   color: #943c14;
 }
 
-.filter-heading h2 {
-  margin: 0;
-  color: #49382d;
-  font-size: 14px;
+.hero-content p {
+  max-width: 470px;
+  color: #716657;
+  line-height: 1.8;
+  font-size: 15px;
 }
 
-.clear-button,
-.active-filters button {
-  padding: 0;
-  color: #943c14;
-  background: none;
-  border: none;
-  font-size: 11px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.filter-group {
-  padding: 22px 0;
-  border-bottom: 1px solid #eee7e0;
-}
-
-.filter-group h3 {
-  margin: 0 0 17px;
-  font-size: 12px;
-}
-
-.category-option,
-.discount-option {
-  display: flex;
+.hero-link {
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
-  margin: 13px 0;
-  color: #786b60;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.category-option input,
-.discount-option input {
-  accent-color: #943c14;
-}
-
-.reset-filter {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-top: 19px;
-  padding: 0;
-  color: #9b6c53;
-  background: transparent;
-  border: none;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-/* TOOLBAR */
-.catalog-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   gap: 15px;
-  margin-bottom: 25px;
+  margin-top: 22px;
+  padding: 13px 20px;
+  background: #943c14;
+  color: white;
+  border-radius: 5px;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 700;
 }
 
-.catalog-result h2 {
-  margin: 0 0 6px;
-  font-family: Georgia, serif;
-  font-size: 24px;
+.hero-decoration {
+  width: 300px;
+  height: 260px;
+  position: relative;
+  flex-shrink: 0;
 }
 
-.catalog-result p {
-  margin: 0;
-  color: #96887d;
-  font-size: 11px;
-}
-
-.sort-control {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  color: #88786c;
-  background: #fff;
-  border: 1px solid #e8dfd6;
-  border-radius: 8px;
-}
-
-.sort-control select {
-  max-width: 150px;
-  color: #59483b;
-  background: transparent;
-  border: none;
-  outline: none;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-/* ACTIVE FILTERS */
-.active-filters {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 9px;
-  margin-bottom: 20px;
-  color: #88786c;
-  font-size: 11px;
-}
-
-.filter-chip {
-  padding: 6px 10px;
-  color: #943c14;
-  background: #f2e5d8;
-  border-radius: 20px;
-}
-
-/* PRODUCTS */
-.product-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 17px;
-}
-
-/* EMPTY */
-.empty-state {
-  padding: 75px 20px;
-  background: #fff;
-  border: 1px dashed #d9cabc;
-  border-radius: 15px;
-  text-align: center;
-}
-
-.empty-icon {
-  display: grid;
-  place-items: center;
-  width: 65px;
-  height: 65px;
-  margin: 0 auto 18px;
-  color: #943c14;
-  background: #f7eee5;
+.decoration-circle {
+  position: absolute;
   border-radius: 50%;
 }
 
-.empty-state h3 {
-  margin: 0 0 8px;
+.circle-one {
+  width: 220px;
+  height: 220px;
+  right: 10px;
+  top: 10px;
+  background: #b7b995;
+}
+
+.circle-two {
+  width: 145px;
+  height: 145px;
+  right: 110px;
+  top: 95px;
+  background: #c47b54;
+  border: 12px solid #efe5d4;
+}
+
+.decoration-label {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  padding: 15px 20px;
+  background: #faf7f0;
+  color: #943c14;
   font-family: Georgia, serif;
-  font-size: 22px;
+  font-style: italic;
+  font-size: 17px;
+  line-height: 1.3;
+  transform: rotate(-5deg);
 }
 
-.empty-state p {
-  color: #928478;
-  font-size: 12px;
-  line-height: 1.7;
+.catalog-container {
+  max-width: 1200px;
+  padding: 70px 28px 35px;
+  margin: auto;
 }
 
-.empty-state button {
-  margin-top: 12px;
-  padding: 12px 18px;
-  color: #fff;
-  background: #943c14;
-  border: none;
-  border-radius: 8px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-/* PAGINATION */
-.pagination {
+.catalog-heading {
   display: flex;
-  justify-content: center;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 38px;
+  align-items: end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 28px;
 }
 
-.pagination button {
-  min-width: 36px;
-  height: 36px;
-  padding: 0 11px;
-  color: #705f52;
-  background: #fff;
-  border: 1px solid #e8dfd6;
-  border-radius: 8px;
-  font-size: 11px;
+.catalog-heading h2 {
+  font-family: Georgia, serif;
+  font-size: 36px;
+  font-weight: 500;
+  margin: 10px 0 5px;
+}
+
+.catalog-heading p {
+  color: #857b6d;
+  font-size: 14px;
+  margin: 0;
+}
+
+.product-count {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #857b6d;
+  font-size: 13px;
+}
+
+.product-count strong {
+  color: #943c14;
+  font-size: 23px;
+}
+
+.catalog-toolbar {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 22px;
+}
+
+.search-box,
+.sort-box {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #e6ddcf;
+  border-radius: 5px;
+  background: #fffdf9;
+  color: #8b806f;
+  padding: 0 15px;
+}
+
+.search-box {
+  flex: 1;
+}
+
+.search-box input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #30291f;
+  font: inherit;
+  font-size: 13px;
+}
+
+.sort-box select {
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #514738;
+  font: inherit;
+  font-size: 13px;
   cursor: pointer;
 }
 
-.pagination button.active {
-  color: #fff;
+.category-list {
+  display: flex;
+  gap: 9px;
+  flex-wrap: wrap;
+  margin-bottom: 30px;
+}
+
+.category-button {
+  border: 1px solid #e5dac9;
+  border-radius: 30px;
+  padding: 9px 17px;
+  color: #716657;
+  background: transparent;
+  font-size: 12px;
+  cursor: pointer;
+  transition: 0.2s;
+}
+
+.category-button:hover,
+.category-button.active {
   background: #943c14;
   border-color: #943c14;
+  color: white;
 }
 
-.pagination button:disabled {
+.product-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 25px 20px;
+}
+
+.product-card {
+  background: #fffdf9;
+  border: 1px solid #eee6da;
+  border-radius: 7px;
+  overflow: hidden;
+  transition:
+    transform 0.25s,
+    box-shadow 0.25s;
+}
+
+.product-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 12px 30px #4b382012;
+}
+
+.product-image-link {
+  display: block;
+  text-decoration: none;
+}
+
+.product-image {
+  height: 235px;
+  background: #eee6da;
+  position: relative;
+  overflow: hidden;
+}
+
+.product-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.4s;
+}
+
+.product-card:hover .product-image img {
+  transform: scale(1.05);
+}
+
+.product-category {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  background: #faf7f0ef;
+  color: #943c14;
+  padding: 6px 10px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.product-info {
+  padding: 17px;
+}
+
+.artisan-name {
+  display: block;
+  color: #8c806f;
+  font-size: 11px;
+  margin-bottom: 7px;
+}
+
+.product-name {
+  display: block;
+  min-height: 42px;
+  color: #30291f;
+  font-family: Georgia, serif;
+  font-size: 17px;
+  text-decoration: none;
+  line-height: 1.35;
+}
+
+.product-name:hover {
+  color: #943c14;
+}
+
+.product-bottom {
+  border-top: 1px solid #eee6da;
+  margin-top: 15px;
+  padding-top: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.product-price {
+  display: block;
+  color: #943c14;
+  font-size: 14px;
+}
+
+.stock-info {
+  display: block;
+  color: #948a7c;
+  font-size: 10px;
+  margin-top: 4px;
+}
+
+.add-cart-button {
+  width: 39px;
+  height: 39px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  color: white;
+  background: #64704c;
+  cursor: pointer;
+  transition: 0.2s;
+}
+
+.add-cart-button:hover {
+  background: #485438;
+}
+
+.add-cart-button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
 
-@media (max-width: 1000px) {
-  .catalog-layout {
-    grid-template-columns: 210px minmax(0, 1fr);
-    gap: 20px;
+.loading-state,
+.empty-state {
+  text-align: center;
+  padding: 70px 20px;
+  color: #827768;
+}
+
+.loading-spinner {
+  width: 35px;
+  height: 35px;
+  margin: 0 auto 15px;
+  border: 3px solid #e7ddcf;
+  border-top-color: #943c14;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.empty-icon {
+  width: 65px;
+  height: 65px;
+  margin: auto auto 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #eee6da;
+  color: #943c14;
+}
+
+.empty-state h3 {
+  font-family: Georgia, serif;
+  color: #30291f;
+  font-size: 24px;
+  font-weight: 500;
+}
+
+.empty-state p {
+  font-size: 13px;
+}
+
+.empty-state button {
+  margin-top: 12px;
+  border: 0;
+  border-radius: 4px;
+  background: #943c14;
+  color: white;
+  padding: 11px 18px;
+  cursor: pointer;
+}
+
+.catalog-bottom {
+  max-width: 1200px;
+  margin: 35px auto 0;
+  padding: 35px 28px;
+  background: #e8eadf;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 25px;
+}
+
+.catalog-bottom h2 {
+  max-width: 580px;
+  font-family: Georgia, serif;
+  font-size: 27px;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.bottom-link {
+  flex-shrink: 0;
+  padding: 13px 18px;
+  background: #64704c;
+  color: white;
+  border-radius: 4px;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+@media (max-width: 950px) {
+  .product-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .product-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .hero-decoration {
+    transform: scale(0.8);
+    transform-origin: right center;
   }
 }
 
 @media (max-width: 680px) {
   .catalog-hero {
-    padding: 35px 20px 45px;
+    min-height: 340px;
+    padding: 55px 25px;
   }
 
-  .catalog-search {
-    height: 52px;
+  .hero-decoration {
+    display: none;
   }
 
-  .catalog-search button {
-    padding: 0 12px;
-    font-size: 11px;
+  .hero-content h1 {
+    font-size: 43px;
   }
 
-  .catalog-content {
-    padding: 35px 18px 60px;
+  .catalog-container {
+    padding: 45px 18px 25px;
   }
 
-  .catalog-layout {
-    grid-template-columns: 1fr;
+  .catalog-heading {
+    align-items: start;
   }
 
-  .filter-sidebar {
-    padding: 17px;
+  .catalog-heading h2 {
+    font-size: 29px;
   }
 
-  .filter-group {
-    padding: 15px 0;
+  .product-count {
+    flex-direction: column;
+    align-items: end;
+    gap: 0;
+    white-space: nowrap;
   }
 
   .catalog-toolbar {
-    align-items: flex-start;
     flex-direction: column;
   }
 
-  .sort-control {
-    align-self: flex-end;
+  .sort-box {
+    justify-content: space-between;
   }
 
   .product-grid {
-    gap: 12px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 13px;
+  }
+
+  .product-image {
+    height: 175px;
+  }
+
+  .product-info {
+    padding: 12px;
+  }
+
+  .product-name {
+    font-size: 15px;
+  }
+
+  .product-price {
+    font-size: 12px;
+  }
+
+  .add-cart-button {
+    width: 34px;
+    height: 34px;
+  }
+
+  .catalog-bottom {
+    margin: 20px 18px 0;
+    padding: 25px 20px;
+    flex-direction: column;
+    align-items: start;
+  }
+
+  .catalog-bottom h2 {
+    font-size: 23px;
+  }
+}
+
+@media (max-width: 360px) {
+  .product-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .product-image {
+    height: 230px;
   }
 }
 </style>

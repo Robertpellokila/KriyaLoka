@@ -130,7 +130,7 @@ export const useSellerStore = defineStore("sellerStore", {
 
         if (
           account.role !== "seller" ||
-          !["pending", "active"].includes(account.account_status)
+          !["pending", "active", "rejected"].includes(account.account_status)
         ) {
           throw new Error("Akun Anda belum diizinkan mengunggah gambar.");
         }
@@ -225,6 +225,26 @@ export const useSellerStore = defineStore("sellerStore", {
             console.warn("Gambar lama belum berhasil dihapus:", removeError);
           }
         }
+
+        return data;
+      } catch (error) {
+        this.error = error.message;
+        throw error;
+      } finally {
+        this.saving = false;
+      }
+    },
+
+    async resubmitApplication() {
+      this.saving = true;
+      this.error = null;
+
+      try {
+        const { data, error } = await supabase.rpc(
+          "resubmit_seller_application",
+        );
+
+        if (error) throw error;
 
         return data;
       } catch (error) {

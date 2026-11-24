@@ -10,9 +10,11 @@ import {
   ClipboardList,
   LogOut,
   ChevronRight,
+  CreditCard,
 } from "lucide-vue-next";
 
 import { useAuthStore } from "../stores/auth.js";
+import NotificationBell from "@/components/notifications/NotificationBell.vue";
 
 const route = useRoute();
 const router = useRouter();
@@ -35,6 +37,11 @@ const dashboardConfig = computed(() => {
           label: "Profil Toko",
           path: "/dashboard/penjual/toko",
           icon: Store,
+        },
+        {
+          label: "Metode Pembayaran",
+          path: "/dashboard/penjual/pembayaran",
+          icon: CreditCard,
         },
         {
           label: "Produk Saya",
@@ -152,10 +159,14 @@ const logout = async () => {
           <h1>{{ dashboardConfig.title }}</h1>
         </div>
 
-        <RouterLink to="/" class="visit-store">
-          Kunjungi Marketplace
-          <ChevronRight :size="16" />
-        </RouterLink>
+        <div class="topbar-actions">
+          <NotificationBell v-if="role === 'seller'" />
+
+          <RouterLink to="/" class="visit-store">
+            Kunjungi Marketplace
+            <ChevronRight :size="16" />
+          </RouterLink>
+        </div>
       </header>
 
       <main class="dashboard-page">
@@ -397,6 +408,22 @@ const logout = async () => {
 
   .dashboard-page {
     padding: 22px 16px;
+  }
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+@media (max-width: 600px) {
+  .topbar-actions {
+    gap: 9px;
+  }
+
+  .visit-store {
+    font-size: 10px;
   }
 }
 </style>
