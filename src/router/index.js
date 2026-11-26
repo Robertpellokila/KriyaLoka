@@ -9,6 +9,8 @@ import LoginView from "../views/LoginView.vue";
 import RegisterView from "../views/RegisterView.vue";
 import ProfileView from "../views/ProfileView.vue";
 import NotFoundView from "../views/NotFoundView.vue";
+import ProdukUnggulanView from "../views/ProdukUnggulanView.vue";
+import KontakView from "../views/KontakView.vue";
 
 import DashboardSectionView from "../views/DashboardSectionView.vue";
 import BuyerDashboardView from "../views/BuyerDashboardView.vue";
@@ -50,6 +52,16 @@ const routes = [
     path: "/produk/:id",
     name: "product-detail",
     component: ProductDetailView,
+  },
+  {
+    path: "/produk-unggulan",
+    name: "featured-products",
+    component: ProdukUnggulanView,
+  },
+  {
+    path: "/kontak",
+    name: "contact",
+    component: KontakView,
   },
   {
     path: "/keranjang",

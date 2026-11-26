@@ -19,7 +19,7 @@ import {
   Home,
   Store,
   Sparkles,
-  Users,
+  Phone,
   LogOut,
 } from "lucide-vue-next";
 
@@ -89,6 +89,10 @@ const activeNavIndex = computed(() => {
   if (route.path === "/") return 0;
 
   if (route.path === "/katalog") return 1;
+
+  if (route.path === "/produk-unggulan") return 2;
+
+  if (route.path === "/kontak") return 3;
 
   return -1;
 });
@@ -303,11 +307,27 @@ onBeforeUnmount(() => {
 
         <!-- Produk Unggulan -->
 
-        <a href="/#produk"> Produk Unggulan </a>
+        <RouterLink
+          :ref="(el) => setNavItem(el, 2)"
+          to="/produk-unggulan"
+          :class="{
+            'is-liquid-active': activeNavIndex === 2,
+          }"
+        >
+          Produk Unggulan
+        </RouterLink>
 
-        <!-- Tentang Pengrajin -->
+        <!-- Kontak -->
 
-        <a href="/#pengrajin"> Kontak </a>
+        <RouterLink
+          :ref="(el) => setNavItem(el, 3)"
+          to="/kontak"
+          :class="{
+            'is-liquid-active': activeNavIndex === 3,
+          }"
+        >
+          Kontak
+        </RouterLink>
       </nav>
 
       <!-- ==================================
@@ -390,9 +410,11 @@ onBeforeUnmount(() => {
 
         <RouterLink to="/katalog" @click="closeMenu"> Produk </RouterLink>
 
-        <a href="/#produk" @click="closeMenu"> Produk Unggulan </a>
+        <RouterLink to="/produk-unggulan" @click="closeMenu">
+          Produk Unggulan
+        </RouterLink>
 
-        <a href="/#pengrajin" @click="closeMenu"> Kontak </a>
+        <RouterLink to="/kontak" @click="closeMenu"> Kontak </RouterLink>
 
         <RouterLink to="/keranjang" @click="closeMenu"> Keranjang </RouterLink>
 
@@ -576,15 +598,25 @@ onBeforeUnmount(() => {
           <span>Produk</span>
         </RouterLink>
 
-        <a href="/#produk" class="bottom-item">
+        <RouterLink
+          to="/produk-unggulan"
+          class="bottom-item"
+          :class="{ active: mobileActiveIndex === 2 }"
+          @click="closeMenu"
+        >
           <Sparkles :size="20" />
           <span>Unggulan</span>
-        </a>
+        </RouterLink>
 
-        <a href="/#pengrajin" class="bottom-item">
-          <Users :size="20" />
-          <span>Pengrajin</span>
-        </a>
+        <RouterLink
+          to="/kontak"
+          class="bottom-item"
+          :class="{ active: mobileActiveIndex === 3 }"
+          @click="closeMenu"
+        >
+          <Phone :size="20" />
+          <span>Kontak</span>
+        </RouterLink>
 
         <button
           type="button"
