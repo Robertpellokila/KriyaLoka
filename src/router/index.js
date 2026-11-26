@@ -9,6 +9,8 @@ import LoginView from "../views/LoginView.vue";
 import RegisterView from "../views/RegisterView.vue";
 import ProfileView from "../views/ProfileView.vue";
 import NotFoundView from "../views/NotFoundView.vue";
+import ProdukUnggulanView from "../views/ProdukUnggulanView.vue";
+import KontakView from "../views/KontakView.vue";
 
 import DashboardSectionView from "../views/DashboardSectionView.vue";
 import BuyerDashboardView from "../views/BuyerDashboardView.vue";
@@ -26,9 +28,10 @@ import AdminProductReviewView from "../views/admin/AdminProductReviewView.vue";
 import SellerManagementView from "@/views/admin/SellerManagementView.vue";
 import AdminSellerDetailView from "@/views/admin/AdminSellerDetailView.vue";
 import AdminProductManagementView from "@/views/admin/AdminProductManagementView.vue";
-import CheckoutView from "@/views/CheckoutView.vue";
-import SellerPaymentMethodsView from "@/views/SellerPaymentMethodsView.vue";
-import SellerOrdersView from "@/views/SellerOrdersView.vue";
+import AdminOrderManagementView from "@/views/admin/AdminOrderManagementView.vue";
+import CheckoutView from "../views/CheckoutView.vue";
+import SellerPaymentMethodsView from "../views/SellerPaymentMethodsView.vue";
+import SellerOrdersView from "../views/SellerOrdersView.vue";
 
 const routes = [
   // ==========================================
@@ -49,6 +52,16 @@ const routes = [
     path: "/produk/:id",
     name: "product-detail",
     component: ProductDetailView,
+  },
+  {
+    path: "/produk-unggulan",
+    name: "featured-products",
+    component: ProdukUnggulanView,
+  },
+  {
+    path: "/kontak",
+    name: "contact",
+    component: KontakView,
   },
   {
     path: "/keranjang",
@@ -255,7 +268,7 @@ const routes = [
       {
         path: "pesanan",
         name: "admin-orders",
-        component: DashboardSectionView,
+        component: AdminOrderManagementView,
         meta: {
           title: "Manajemen Pesanan",
           breadcrumb: "KriyaLoka / Manajemen Pesanan",
