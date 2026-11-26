@@ -307,7 +307,7 @@ onBeforeUnmount(() => {
 
         <!-- Tentang Pengrajin -->
 
-        <a href="/#pengrajin"> Tentang Pengrajin </a>
+        <a href="/#pengrajin"> Kontak </a>
       </nav>
 
       <!-- ==================================
@@ -392,7 +392,7 @@ onBeforeUnmount(() => {
 
         <a href="/#produk" @click="closeMenu"> Produk Unggulan </a>
 
-        <a href="/#pengrajin" @click="closeMenu"> Tentang Pengrajin </a>
+        <a href="/#pengrajin" @click="closeMenu"> Kontak </a>
 
         <RouterLink to="/keranjang" @click="closeMenu"> Keranjang </RouterLink>
 
