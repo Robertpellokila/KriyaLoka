@@ -1,11 +1,8 @@
 <script setup>
-import {
-  ShieldCheck,
-  ChevronRight,
-  LogOut,
-} from "lucide-vue-next";
+import { computed } from "vue";
+import { ShieldCheck, ChevronRight, LogOut } from "lucide-vue-next";
 
-defineProps({
+const props = defineProps({
   menuItems: {
     type: Array,
     default: () => [],
@@ -26,20 +23,31 @@ defineProps({
     type: String,
     default: "P",
   },
-  mobileOpen: {
-    type: Boolean,
-    default: false,
-  },
 });
 
 const emit = defineEmits(["change-section", "logout"]);
+
+// Pengelompokan menu agar daftar lebih mudah dipindai.
+const groupDefinitions = [
+  { title: "Akun", ids: ["overview", "profile", "addresses"] },
+  { title: "Aktivitas", ids: ["orders", "wishlist", "reviews"] },
+  { title: "Lainnya", ids: ["settings"] },
+];
+
+const menuGroups = computed(() =>
+  groupDefinitions
+    .map((group) => ({
+      title: group.title,
+      items: group.ids
+        .map((id) => props.menuItems.find((item) => item.id === id))
+        .filter(Boolean),
+    }))
+    .filter((group) => group.items.length > 0),
+);
 </script>
 
 <template>
-  <aside
-    class="account-sidebar"
-    :class="{ 'mobile-open': mobileOpen }"
-  >
+  <aside class="account-sidebar">
     <div class="account-user-card">
       <div class="user-avatar">{{ userInitial }}</div>
 
@@ -50,30 +58,35 @@ const emit = defineEmits(["change-section", "logout"]);
 
       <div class="buyer-badge">
         <ShieldCheck :size="13" />
-        Buyer
+        Pembeli
       </div>
     </div>
 
     <div class="sidebar-divider"></div>
 
-    <nav class="account-menu">
-      <button
-        v-for="item in menuItems"
-        :key="item.id"
-        type="button"
-        class="menu-item"
-        :class="{ active: activeSection === item.id }"
-        @click="emit('change-section', item.id)"
+    <nav class="account-menu" aria-label="Menu akun">
+      <div
+        v-for="group in menuGroups"
+        :key="group.title"
+        class="account-menu-group"
       >
-        <component :is="item.icon" :size="19" />
-        <span>{{ item.label }}</span>
+        <p class="menu-group-title">{{ group.title }}</p>
 
-        <ChevronRight
-          v-if="activeSection === item.id"
-          class="menu-chevron"
-          :size="16"
-        />
-      </button>
+        <button
+          v-for="item in group.items"
+          :key="item.id"
+          type="button"
+          class="menu-item"
+          :class="{ active: activeSection === item.id }"
+          :aria-current="activeSection === item.id ? 'page' : undefined"
+          @click="emit('change-section', item.id)"
+        >
+          <component :is="item.icon" :size="19" />
+          <span>{{ item.label }}</span>
+
+          <ChevronRight class="menu-chevron" :size="16" />
+        </button>
+      </div>
     </nav>
 
     <div class="sidebar-divider"></div>

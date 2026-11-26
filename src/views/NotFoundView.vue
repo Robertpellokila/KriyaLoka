@@ -79,10 +79,6 @@ const errorContent = computed(() => {
 });
 
 const goHome = () => {
-  if (!navigator.onLine) {
-    return;
-  }
-
   router.push("/");
 };
 

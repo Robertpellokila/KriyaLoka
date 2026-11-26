@@ -236,11 +236,15 @@ img {
   display: none;
 }
 
-/* Footer */
+/* Footer + maskot */
+
+/* ========================================
+   FOOTER
+======================================== */
 
 .site-footer {
   margin-top: 70px;
-  padding-top: 52px;
+  padding-top: 48px;
   background: #f3e9df;
   border-top: 1px solid var(--border);
 }
@@ -249,15 +253,37 @@ img {
   display: grid;
   grid-template-columns: 2fr 1fr 1fr 1fr;
   gap: 45px;
-  padding-bottom: 40px;
+  padding-bottom: 36px;
 }
 
-.footer-brand p,
-.footer-column p {
-  max-width: 330px;
+.footer-brand {
+  display: flex;
+  align-items: flex-end;
+  gap: 18px;
+}
+
+.footer-brand-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.footer-desc {
+  max-width: 300px;
+  margin: 14px 0 0;
   color: var(--muted);
   font-size: 13px;
-  line-height: 1.9;
+  line-height: 1.85;
+}
+
+.footer-desc-short {
+  display: none;
+}
+
+/* Tautan: wrapper "transparan" agar kolom menjadi item grid footer */
+.footer-links {
+  display: contents;
 }
 
 .footer-column {
@@ -272,9 +298,17 @@ img {
   font-size: 14px;
 }
 
+.footer-column p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
 .footer-column a {
   color: var(--muted);
   font-size: 12px;
+  transition: color 0.2s;
 }
 
 .footer-column a:hover {
@@ -290,6 +324,280 @@ img {
   border-top: 1px solid var(--border);
   color: var(--muted);
   font-size: 11px;
+}
+
+.footer-bottom p {
+  margin: 0;
+}
+
+/* ========================================
+   MASKOT
+======================================== */
+
+.mascot-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.mascot {
+  display: block;
+  width: 88px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 20px;
+  cursor: pointer;
+}
+
+.mascot:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+
+.mascot svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.mascot-shadow {
+  fill: #211a16;
+  opacity: 0.18;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: mascot-shadow 2.6s ease-in-out infinite;
+}
+
+.mascot-bob {
+  animation: mascot-float 2.6s ease-in-out infinite;
+}
+
+.mascot-jump.is-jumping {
+  animation: mascot-jump 0.6s ease-out;
+}
+
+.mascot-arm {
+  /* titik putar di bahu */
+  transform-origin: 72px 68px;
+  animation: mascot-wave 5s ease-in-out infinite;
+}
+
+.mascot-eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: mascot-blink 4.5s infinite;
+}
+
+.mascot-bubble {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 2;
+  width: max-content;
+  max-width: 190px;
+  margin: 0;
+  padding: 8px 12px;
+  color: var(--text);
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px 12px 12px 3px;
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.bubble-enter-active,
+.bubble-leave-active {
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+  transform-origin: bottom left;
+}
+
+.bubble-enter-from,
+.bubble-leave-to {
+  opacity: 0;
+  transform: translateY(4px) scale(0.92);
+}
+
+@keyframes mascot-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes mascot-shadow {
+  0%,
+  100% {
+    transform: scaleX(1);
+    opacity: 0.18;
+  }
+  50% {
+    transform: scaleX(0.86);
+    opacity: 0.11;
+  }
+}
+
+@keyframes mascot-wave {
+  0%,
+  55%,
+  100% {
+    transform: rotate(0deg);
+  }
+  10%,
+  30% {
+    transform: rotate(-24deg);
+  }
+  20%,
+  40% {
+    transform: rotate(8deg);
+  }
+}
+
+@keyframes mascot-blink {
+  0%,
+  92%,
+  100% {
+    transform: scaleY(1);
+  }
+  95% {
+    transform: scaleY(0.1);
+  }
+}
+
+@keyframes mascot-jump {
+  0% {
+    transform: translateY(0);
+  }
+  35% {
+    transform: translateY(-14px);
+  }
+  60% {
+    transform: translateY(0);
+  }
+  78% {
+    transform: translateY(-4px);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mascot-shadow,
+  .mascot-bob,
+  .mascot-arm,
+  .mascot-eye,
+  .mascot-jump.is-jumping {
+    animation: none;
+  }
+
+  .bubble-enter-active,
+  .bubble-leave-active {
+    transition: none;
+  }
+}
+
+/* ========================================
+   RESPONSIVE
+======================================== */
+
+@media (max-width: 1050px) {
+  .footer-grid {
+    gap: 28px;
+  }
+}
+
+/* Mobile: ringkas. Brand + maskot dalam satu baris, tautan menjadi chip. */
+@media (max-width: 850px) {
+  .site-footer {
+    margin-top: 40px;
+    padding-top: 36px; /* ruang untuk gelembung ucapan maskot */
+  }
+
+  .footer-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding-bottom: 18px;
+  }
+
+  .footer-brand {
+    align-items: center;
+    gap: 14px;
+  }
+
+  .mascot {
+    width: 62px;
+  }
+
+  .footer-desc {
+    display: none;
+  }
+
+  .footer-desc-short {
+    display: block;
+    margin: 6px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .footer-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .footer-column {
+    display: contents;
+  }
+
+  .footer-column h3,
+  .footer-column .footer-location {
+    display: none;
+  }
+
+  .footer-column a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 34px;
+    padding: 0 13px;
+    color: var(--muted);
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .footer-bottom {
+    justify-content: center;
+    min-height: 0;
+    padding-block: 14px;
+    text-align: center;
+  }
+
+  .footer-bottom span {
+    display: none;
+  }
+
+  .footer-bottom p {
+    font-size: 11px;
+  }
+}
+
+/* Beri ruang agar tidak tertutup bottom nav */
+@media (max-width: 850px) {
+  body.has-bottom-nav .site-footer {
+    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  }
 }
 
 /* General page elements */
@@ -389,11 +697,6 @@ img {
     border: 1px solid var(--border);
     border-radius: 8px;
   }
-
-  .footer-grid {
-    grid-template-columns: 1fr 1fr;
-    gap: 30px;
-  }
 }
 
 @media (max-width: 520px) {
@@ -403,21 +706,5 @@ img {
 
   .brand-name {
     font-size: 20px;
-  }
-
-  .footer-grid {
-    grid-template-columns: 1fr 1fr;
-    gap: 25px 16px;
-  }
-
-  .footer-brand {
-    grid-column: 1 / -1;
-  }
-
-  .footer-bottom {
-    flex-direction: column;
-    align-items: flex-start;
-    justify-content: center;
-    padding-block: 16px;
   }
 }

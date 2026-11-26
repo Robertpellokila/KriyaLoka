@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
 import { supabase } from "../services/supabase.js";
+import { offlineDB } from "@/services/offline/database.js";
 
 const PRODUCT_BUCKET = "product-assets";
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
@@ -26,6 +27,211 @@ function sanitizeFileName(value) {
     .toLowerCase()
     .replace(/[^a-z0-9.-]/g, "-")
     .replace(/-+/g, "-");
+}
+
+const PUBLIC_PRODUCT_CACHE_KEY = "public-products";
+
+const MAX_CACHED_IMAGE_SIZE = 2 * 1024 * 1024;
+
+const activeCachedImageUrls = new Set();
+
+function revokeCachedImageUrls() {
+  activeCachedImageUrls.forEach((url) => {
+    URL.revokeObjectURL(url);
+  });
+
+  activeCachedImageUrls.clear();
+}
+
+// Menyimpan gambar utama setiap produk ke IndexedDB.
+async function cachePrimaryProductImages(products) {
+  const tasks = products.map(async (product) => {
+    const imageUrl = product.product_images?.[0]?.image_url;
+
+    if (!imageUrl) return;
+
+    try {
+      const response = await fetch(imageUrl);
+
+      if (!response.ok) return;
+
+      const blob = await response.blob();
+
+      // Hindari menyimpan gambar yang terlalu besar.
+      if (
+        !blob.type.startsWith("image/") ||
+        blob.size > MAX_CACHED_IMAGE_SIZE
+      ) {
+        return;
+      }
+
+      await offlineDB.productImageCache.put({
+        url: imageUrl,
+        blob,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.warn("Gagal menyimpan cache gambar:", imageUrl, error);
+    }
+  });
+
+  await Promise.allSettled(tasks);
+}
+
+// Membaca produk dari IndexedDB ketika offline.
+async function getCachedPublicProducts(cacheKey) {
+  const cached = await offlineDB.publicProductCache.get(cacheKey);
+
+  if (!cached?.products?.length) {
+    return null;
+  }
+
+  revokeCachedImageUrls();
+
+  const products = await Promise.all(
+    cached.products.map(async (product) => {
+      const copiedProduct = {
+        ...product,
+        product_images: [...(product.product_images || [])],
+      };
+
+      const firstImage = copiedProduct.product_images[0];
+
+      if (firstImage?.image_url) {
+        const cachedImage = await offlineDB.productImageCache.get(
+          firstImage.image_url,
+        );
+
+        if (cachedImage?.blob) {
+          const localUrl = URL.createObjectURL(cachedImage.blob);
+
+          activeCachedImageUrls.add(localUrl);
+
+          copiedProduct.product_images[0] = {
+            ...firstImage,
+            image_url: localUrl,
+          };
+        }
+      }
+
+      return copiedProduct;
+    }),
+  );
+
+  return products;
+}
+
+// Menyimpan seluruh gambar detail produk ke IndexedDB.
+async function cacheProductDetailImages(product) {
+  const images = product.product_images || [];
+
+  const tasks = images.map(async (image) => {
+    if (!image.image_url) return;
+
+    try {
+      const response = await fetch(image.image_url);
+
+      if (!response.ok) return;
+
+      const blob = await response.blob();
+
+      if (
+        !blob.type.startsWith("image/") ||
+        blob.size > MAX_CACHED_IMAGE_SIZE
+      ) {
+        return;
+      }
+
+      await offlineDB.productImageCache.put({
+        url: image.image_url,
+        blob,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.warn(
+        "Gagal menyimpan gambar detail produk:",
+        image.image_url,
+        error,
+      );
+    }
+  });
+
+  await Promise.allSettled(tasks);
+}
+
+// Membaca detail produk dari IndexedDB.
+
+// Membaca detail produk dari cache detail atau cache katalog.
+async function getCachedProductDetail(productId) {
+  const cacheKey = `product-detail:${productId}`;
+
+  // 1. Cari cache detail produk terlebih dahulu.
+  const cachedDetail = await offlineDB.publicProductCache.get(cacheKey);
+
+  let product = cachedDetail?.product || null;
+
+  // 2. Jika belum ada, cari produk dari seluruh cache katalog.
+  if (!product) {
+    const catalogCaches = await offlineDB.publicProductCache.toArray();
+
+    for (const cache of catalogCaches) {
+      if (!Array.isArray(cache.products)) continue;
+
+      const foundProduct = cache.products.find(
+        (item) => String(item.id) === String(productId),
+      );
+
+      if (foundProduct) {
+        product = foundProduct;
+        break;
+      }
+    }
+  }
+
+  if (!product) {
+    return null;
+  }
+
+  // Salin data agar cache asli tidak ikut berubah.
+  const copiedProduct = {
+    ...product,
+    product_images: [...(product.product_images || [])],
+  };
+
+  // 3. Ganti URL gambar dengan Blob lokal jika tersedia.
+  const images = await Promise.all(
+    copiedProduct.product_images.map(async (image) => {
+      if (!image.image_url) return image;
+
+      try {
+        const cachedImage = await offlineDB.productImageCache.get(
+          image.image_url,
+        );
+
+        if (!cachedImage?.blob) {
+          return image;
+        }
+
+        const localUrl = URL.createObjectURL(cachedImage.blob);
+
+        activeCachedImageUrls.add(localUrl);
+
+        return {
+          ...image,
+          image_url: localUrl,
+        };
+      } catch (error) {
+        console.warn("Gagal membaca gambar lokal:", error);
+        return image;
+      }
+    }),
+  );
+
+  copiedProduct.product_images = images.sort(
+    (a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0),
+  );
+
+  return copiedProduct;
 }
 
 export const useProductStore = defineStore("product", {
@@ -141,23 +347,31 @@ export const useProductStore = defineStore("product", {
     },
 
     // Mengambil katalog produk publik.
+
     async fetchPublicProducts(options = {}) {
       this.loading = true;
       this.error = null;
+
+      const cacheKey = [
+        PUBLIC_PRODUCT_CACHE_KEY,
+        options.category || "all",
+        options.search?.trim() || "all",
+        options.limit || "all",
+      ].join(":");
 
       try {
         let query = supabase
           .from("products")
           .select(
             `
-            *,
-            product_images (
-              id,
-              image_url,
-              image_path,
-              sort_order
-            )
-          `,
+        *,
+        product_images (
+          id,
+          image_url,
+          image_path,
+          sort_order
+        )
+      `,
           )
           .eq("status", "published")
           .order("created_at", { ascending: false });
@@ -178,16 +392,47 @@ export const useProductStore = defineStore("product", {
 
         if (error) throw error;
 
-        this.publicProducts = (data || []).map((product) => ({
+        const normalizedProducts = (data || []).map((product) => ({
           ...product,
           product_images: (product.product_images || []).sort(
             (a, b) => a.sort_order - b.sort_order,
           ),
         }));
 
+        // Simpan data katalog ke IndexedDB.
+        await offlineDB.publicProductCache.put({
+          key: cacheKey,
+          products: normalizedProducts,
+          updatedAt: new Date().toISOString(),
+        });
+
+        // Simpan gambar utama agar bisa ditampilkan offline.
+        await cachePrimaryProductImages(normalizedProducts);
+
+        this.publicProducts = normalizedProducts;
+
         return this.publicProducts;
       } catch (error) {
+        console.warn(
+          "Gagal mengambil produk dari Supabase. Mencoba cache lokal.",
+          error,
+        );
+
+        try {
+          const cachedProducts = await getCachedPublicProducts(cacheKey);
+
+          if (cachedProducts) {
+            this.publicProducts = cachedProducts;
+            this.error = null;
+
+            return this.publicProducts;
+          }
+        } catch (cacheError) {
+          console.error("Gagal membaca cache produk:", cacheError);
+        }
+
         this.error = error.message;
+
         throw error;
       } finally {
         this.loading = false;
@@ -195,38 +440,75 @@ export const useProductStore = defineStore("product", {
     },
 
     // Mengambil detail satu produk.
+
+    // Mengambil detail satu produk dengan dukungan offline.
     async fetchProductById(productId) {
       this.loading = true;
       this.error = null;
 
+      const cacheKey = `product-detail:${productId}`;
+
       try {
+        // Tetap mengambil data terbaru dari Supabase ketika online.
         const { data, error } = await supabase
           .from("products")
           .select(
             `
-            *,
-            product_images (
-              id,
-              image_url,
-              image_path,
-              sort_order
-            )
-          `,
+        *,
+        product_images (
+          id,
+          image_url,
+          image_path,
+          sort_order
+        )
+      `,
           )
           .eq("id", productId)
           .single();
 
         if (error) throw error;
 
-        data.product_images = (data.product_images || []).sort(
-          (a, b) => a.sort_order - b.sort_order,
+        const normalizedProduct = {
+          ...data,
+          product_images: (data.product_images || []).sort(
+            (a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0),
+          ),
+        };
+
+        // Simpan informasi detail produk.
+        await offlineDB.publicProductCache.put({
+          key: cacheKey,
+          product: normalizedProduct,
+          updatedAt: new Date().toISOString(),
+        });
+
+        // Simpan seluruh gambar produk.
+        await cacheProductDetailImages(normalizedProduct);
+
+        this.currentProduct = normalizedProduct;
+
+        return normalizedProduct;
+      } catch (error) {
+        console.warn(
+          "Gagal mengambil detail dari Supabase. Mencoba cache lokal.",
+          error,
         );
 
-        this.currentProduct = data;
+        try {
+          const cachedProduct = await getCachedProductDetail(productId);
 
-        return data;
-      } catch (error) {
+          if (cachedProduct) {
+            this.currentProduct = cachedProduct;
+            this.error = null;
+
+            return cachedProduct;
+          }
+        } catch (cacheError) {
+          console.error("Gagal membaca detail produk dari cache:", cacheError);
+        }
+
         this.error = error.message;
+
         throw error;
       } finally {
         this.loading = false;

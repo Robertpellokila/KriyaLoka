@@ -41,7 +41,8 @@ export default defineConfig({
 
       // Service Worker tidak diaktifkan saat development
       devOptions: {
-        enabled: false,
+        enabled: true,
+        type: "module",
       },
     }),
   ],

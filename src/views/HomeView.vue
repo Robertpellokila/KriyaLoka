@@ -1,5 +1,7 @@
 <script setup>
+import { ref, computed, onMounted } from "vue";
 import { RouterLink } from "vue-router";
+
 import {
   ArrowRight,
   ArrowUpRight,
@@ -11,7 +13,17 @@ import {
 } from "lucide-vue-next";
 
 import ProductCard from "@/components/product/ProductCard.vue";
-import { categories, products } from "@/data/products.js";
+import { useProductStore } from "@/stores/product.js";
+import { supabase } from "@/services/supabase.js";
+import { offlineDB } from "@/services/offline/database.js";
+
+const productStore = useProductStore();
+
+const allProducts = ref([]);
+const artisans = ref([]);
+const loading = ref(true);
+const loadingArtisans = ref(false);
+const homeError = ref("");
 
 const benefits = [
   {
@@ -36,45 +48,244 @@ const benefits = [
   },
 ];
 
-const artisans = [
-  {
-    name: "Made Art Studio",
-    location: "Gianyar, Bali",
-    description: "Menghadirkan seni ukir kayu dengan sentuhan budaya Bali.",
-    image: "https://images.unsplash.com/photo-1452860606245-08befc0ff44b?w=900",
-  },
-  {
-    name: "Bali Woven Craft",
-    location: "Ubud, Bali",
-    description: "Mengolah bahan alami menjadi karya anyaman yang bernilai.",
-    image: "https://images.unsplash.com/photo-1490312278390-ab64016e0aa9?w=900",
-  },
-];
+// ==========================================
+// HELPER
+// ==========================================
 
-const categoryImages = {
-  "kerajinan-kayu":
-    "https://images.unsplash.com/photo-1579783902614-a3fb3927b6a5?w=900",
+function createSlug(value = "") {
+  return String(value)
+    .toLowerCase()
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
 
-  "tenun-tekstil":
-    "https://images.unsplash.com/photo-1600166898405-da9535204843?w=900",
+function getProductImage(product) {
+  const images = product?.product_images || [];
 
-  keramik: "https://images.unsplash.com/photo-1578500494198-246f612d3b3d?w=900",
+  if (!images.length) return "";
 
-  aksesori:
-    "https://images.unsplash.com/photo-1611652022419-a9419f74343d?w=900",
+  const sortedImages = [...images].sort(
+    (a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0),
+  );
 
-  "dekorasi-rumah":
-    "https://images.unsplash.com/photo-1493106641515-6b5631de4bb9?w=900",
+  return sortedImages[0]?.image_url || "";
+}
 
-  anyaman: "https://images.unsplash.com/photo-1590874103328-eac38a683ce7?w=900",
-};
+// ==========================================
+// DYNAMIC CATEGORIES
+// ==========================================
+
+const categories = computed(() => {
+  const categoryMap = new Map();
+
+  allProducts.value.forEach((product) => {
+    const categoryName = product.category?.trim();
+
+    if (!categoryName) return;
+
+    if (!categoryMap.has(categoryName)) {
+      categoryMap.set(categoryName, {
+        id: categoryName,
+        name: categoryName,
+        value: categoryName,
+        slug: createSlug(categoryName),
+        count: 0,
+        image: "",
+      });
+    }
+
+    const category = categoryMap.get(categoryName);
+
+    category.count += 1;
+
+    if (!category.image) {
+      category.image = getProductImage(product);
+    }
+  });
+
+  return Array.from(categoryMap.values()).sort((a, b) => b.count - a.count);
+});
 
 function getCategoryImage(category) {
-  return (
-    categoryImages[category.slug] ||
-    "https://images.unsplash.com/photo-1490312278390-ab64016e0aa9?w=900"
-  );
+  return category.image || "";
 }
+
+// ==========================================
+// FEATURED PRODUCTS
+// ==========================================
+
+const featuredProducts = computed(() => {
+  return [...allProducts.value]
+    .sort(
+      (a, b) =>
+        new Date(b.created_at || 0).getTime() -
+        new Date(a.created_at || 0).getTime(),
+    )
+    .slice(0, 8);
+});
+
+// ==========================================
+// DYNAMIC STATISTICS
+// ==========================================
+
+const totalProducts = computed(() => allProducts.value.length);
+
+const totalArtisans = computed(() => {
+  return new Set(
+    allProducts.value.map((product) => product.seller_id).filter(Boolean),
+  ).size;
+});
+
+const totalCategories = computed(() => categories.value.length);
+
+// ==========================================
+// ARTISAN DATA
+// ==========================================
+
+function mapArtisan(profile, sellerId) {
+  const sellerProducts = allProducts.value.filter(
+    (product) => product.seller_id === sellerId,
+  );
+
+  const firstProduct = sellerProducts[0];
+
+  const storeName =
+    profile?.store_name ||
+    profile?.shop_name ||
+    profile?.business_name ||
+    profile?.name ||
+    "Pengrajin Lokal";
+
+  const city = profile?.city || profile?.regency || "";
+  const province = profile?.province || "";
+
+  return {
+    id: sellerId,
+    name: storeName,
+    location: [city, province].filter(Boolean).join(", ") || "Indonesia",
+    description:
+      profile?.description ||
+      profile?.store_description ||
+      "Menghadirkan karya unik dan berkualitas dari pengrajin lokal.",
+    image:
+      profile?.logo_url ||
+      profile?.store_logo ||
+      profile?.avatar_url ||
+      getProductImage(firstProduct),
+  };
+}
+
+async function fetchHomeArtisans() {
+  loadingArtisans.value = true;
+
+  const sellerIds = [
+    ...new Set(
+      allProducts.value.map((product) => product.seller_id).filter(Boolean),
+    ),
+  ];
+
+  if (!sellerIds.length) {
+    artisans.value = [];
+    loadingArtisans.value = false;
+    return;
+  }
+
+  try {
+    // Mengambil profil pengrajin yang memiliki produk terpublikasi.
+    const { data, error } = await supabase
+      .from("seller_profiles")
+      .select("*")
+      .in("id", sellerIds);
+
+    if (error) throw error;
+
+    const profiles = data || [];
+
+    artisans.value = sellerIds.slice(0, 2).map((sellerId) => {
+      const profile = profiles.find(
+        (item) => item.id === sellerId || item.user_id === sellerId,
+      );
+
+      return mapArtisan(profile, sellerId);
+    });
+
+    // Simpan hasil pengrajin ke IndexedDB.
+    await offlineDB.publicProductCache.put({
+      key: "home-artisans",
+      artisans: artisans.value,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.warn("Gagal mengambil profil pengrajin:", error);
+
+    // Jika offline, gunakan cache pengrajin sebelumnya.
+    try {
+      const cached = await offlineDB.publicProductCache.get("home-artisans");
+
+      if (cached?.artisans?.length) {
+        artisans.value = cached.artisans.filter((artisan) =>
+          sellerIds.includes(artisan.id),
+        );
+      } else {
+        // Tetap tampilkan informasi pengrajin dari produk yang tersedia.
+        artisans.value = sellerIds
+          .slice(0, 2)
+          .map((sellerId) => mapArtisan(null, sellerId));
+      }
+    } catch (cacheError) {
+      console.error("Gagal membaca cache pengrajin:", cacheError);
+
+      artisans.value = sellerIds
+        .slice(0, 2)
+        .map((sellerId) => mapArtisan(null, sellerId));
+    }
+  } finally {
+    loadingArtisans.value = false;
+  }
+}
+
+// ==========================================
+// LOAD HOME DATA
+// ==========================================
+
+async function loadHomeData() {
+  loading.value = true;
+  homeError.value = "";
+
+  try {
+    // Memanggil store katalog yang sudah memiliki cache offline.
+    await productStore.fetchPublicProducts();
+
+    const products = productStore.publicProducts || [];
+
+    allProducts.value = products
+      .filter((product) => product.status === "published")
+      .sort(
+        (a, b) =>
+          new Date(b.created_at || 0).getTime() -
+          new Date(a.created_at || 0).getTime(),
+      );
+
+    await fetchHomeArtisans();
+
+    if (!allProducts.value.length) {
+      homeError.value = "Belum ada produk yang tersedia saat ini.";
+    }
+  } catch (error) {
+    console.error("Gagal memuat Home:", error);
+
+    homeError.value = "Tidak dapat memuat data beranda. Silakan coba kembali.";
+  } finally {
+    loading.value = false;
+  }
+}
+
+onMounted(() => {
+  loadHomeData();
+});
 </script>
 
 <template>
@@ -145,7 +356,7 @@ function getCategoryImage(category) {
           <span class="hero-info-icon">✺</span>
 
           <div>
-            <strong>100+</strong>
+            <strong>{{ totalProducts }}+</strong>
             <span>Produk Lokal</span>
           </div>
         </div>
@@ -156,7 +367,7 @@ function getCategoryImage(category) {
           <span class="hero-info-icon">♙</span>
 
           <div>
-            <strong>50+</strong>
+            <strong>{{ totalArtisans }}+</strong>
             <span>Pengrajin</span>
           </div>
         </div>
@@ -167,8 +378,8 @@ function getCategoryImage(category) {
           <span class="hero-info-icon">✿</span>
 
           <div>
-            <strong>100%</strong>
-            <span>Karya Lokal</span>
+            <strong>{{ totalCategories }}+</strong>
+            <span>Kategori</span>
           </div>
         </div>
       </div>
@@ -202,20 +413,25 @@ function getCategoryImage(category) {
           <RouterLink
             v-for="category in categories"
             :key="category.id"
-            :to="`/katalog?kategori=${category.slug}`"
+            :to="`/katalog?kategori=${encodeURIComponent(category.value)}`"
             class="visual-category-card"
           >
             <img
+              v-if="getCategoryImage(category)"
               :src="getCategoryImage(category)"
               :alt="category.name"
               loading="lazy"
             />
 
+            <div v-else class="category-image-placeholder">
+              <Sparkles :size="32" />
+            </div>
+
             <div class="category-card-overlay"></div>
 
             <div class="category-card-content">
               <span class="category-card-count">
-                {{ category.count }}
+                {{ category.count }} Produk
               </span>
 
               <h3>{{ category.name }}</h3>
@@ -226,6 +442,13 @@ function getCategoryImage(category) {
               </span>
             </div>
           </RouterLink>
+
+          <div
+            v-if="!loading && categories.length === 0"
+            class="home-empty-state"
+          >
+            Belum ada kategori produk yang tersedia.
+          </div>
         </div>
       </div>
     </section>
@@ -240,9 +463,9 @@ function getCategoryImage(category) {
           <div>
             <span class="section-eyebrow"> PILIHAN TERBAIK UNTUKMU </span>
 
-            <h2>Karya Pilihan Minggu Ini</h2>
+            <h2>Karya Terbaru dari Pengrajin</h2>
 
-            <p>Produk favorit pelanggan dari pengrajin terpercaya.</p>
+            <p>Temukan produk terbaru dari pengrajin lokal.</p>
           </div>
 
           <RouterLink to="/katalog" class="text-link">
@@ -251,12 +474,18 @@ function getCategoryImage(category) {
           </RouterLink>
         </div>
 
-        <div class="product-grid">
+        <div v-if="loading" class="home-loading">Memuat produk terbaru...</div>
+
+        <div v-else-if="featuredProducts.length" class="product-grid">
           <ProductCard
-            v-for="product in products"
+            v-for="product in featuredProducts"
             :key="product.id"
             :product="product"
           />
+        </div>
+
+        <div v-else class="home-empty-state">
+          {{ homeError || "Belum ada produk yang dipublikasikan." }}
         </div>
 
         <div class="product-bottom">
@@ -358,14 +587,27 @@ function getCategoryImage(category) {
           </RouterLink>
         </div>
 
-        <div class="artisan-grid">
+        <div v-if="loading || loadingArtisans" class="home-loading">
+          Memuat informasi pengrajin...
+        </div>
+
+        <div v-else-if="artisans.length" class="artisan-grid">
           <article
             v-for="artisan in artisans"
-            :key="artisan.name"
+            :key="artisan.id"
             class="artisan-card"
           >
             <div class="artisan-image">
-              <img :src="artisan.image" :alt="artisan.name" loading="lazy" />
+              <img
+                v-if="artisan.image"
+                :src="artisan.image"
+                :alt="artisan.name"
+                loading="lazy"
+              />
+
+              <div v-else class="artisan-image-placeholder">
+                <HeartHandshake :size="34" />
+              </div>
             </div>
 
             <div class="artisan-content">
@@ -383,6 +625,10 @@ function getCategoryImage(category) {
               </RouterLink>
             </div>
           </article>
+        </div>
+
+        <div v-else class="home-empty-state">
+          Belum ada informasi pengrajin yang tersedia.
         </div>
       </div>
     </section>
@@ -458,10 +704,8 @@ function getCategoryImage(category) {
   position: absolute;
   inset: 0 0 75px;
   z-index: -2;
-
   width: 100%;
   height: calc(100% - 75px);
-
   object-fit: cover;
   object-position: center 48%;
 }
@@ -470,7 +714,6 @@ function getCategoryImage(category) {
   position: absolute;
   inset: 0 0 75px;
   z-index: -1;
-
   background:
     linear-gradient(
       90deg,
@@ -485,7 +728,6 @@ function getCategoryImage(category) {
   position: relative;
   display: flex;
   align-items: center;
-
   max-width: 1220px;
   min-height: 570px;
   margin: 0 auto;
@@ -501,7 +743,6 @@ function getCategoryImage(category) {
   display: flex;
   align-items: center;
   gap: 10px;
-
   color: #f3d1a4;
   font-size: 11px;
   font-weight: 800;
@@ -521,7 +762,6 @@ function getCategoryImage(category) {
 
 .marketplace-hero-content h1 {
   margin: 28px 0 22px;
-
   color: #fffaf2;
   font-family: Georgia, serif;
   font-size: clamp(48px, 6vw, 76px);
@@ -556,18 +796,14 @@ function getCategoryImage(category) {
   align-items: center;
   justify-content: center;
   gap: 12px;
-
   min-height: 49px;
   padding: 0 23px;
-
   color: white;
   background: #b65327;
   border-radius: 9px;
-
   font-size: 13px;
   font-weight: 700;
   text-decoration: none;
-
   transition: 0.25s ease;
 }
 
@@ -580,7 +816,6 @@ function getCategoryImage(category) {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-
   color: white;
   font-size: 12px;
   font-weight: 600;
@@ -590,14 +825,11 @@ function getCategoryImage(category) {
 .story-play {
   display: grid;
   place-items: center;
-
   width: 39px;
   height: 39px;
-
   color: #a64d27;
   background: #fffaf2;
   border-radius: 50%;
-
   transition: 0.2s ease;
 }
 
@@ -609,17 +841,13 @@ function getCategoryImage(category) {
   position: absolute;
   right: 0;
   bottom: 100px;
-
   display: flex;
   align-items: center;
   gap: 13px;
-
   padding: 15px 20px;
-
   color: #483328;
   background: rgba(255, 250, 242, 0.95);
   border-radius: 11px;
-
   box-shadow: 0 10px 35px rgba(30, 20, 12, 0.15);
 }
 
@@ -649,18 +877,14 @@ function getCategoryImage(category) {
 
 .hero-bottom-info {
   position: relative;
-
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 55px;
-
   width: min(700px, 100%);
   min-height: 125px;
-
   margin: -35px auto 0;
   padding: 35px 30px 20px;
-
   background: #f8efe4;
   border-radius: 50% 50% 0 0 / 28% 28% 0 0;
 }
@@ -713,7 +937,6 @@ function getCategoryImage(category) {
 
 .section-eyebrow {
   display: inline-block;
-
   color: var(--terracotta);
   font-size: 10px;
   font-weight: 800;
@@ -723,7 +946,6 @@ function getCategoryImage(category) {
 .section-heading h2,
 .benefit-heading h2 {
   margin: 12px 0 9px;
-
   color: #3d2d24;
   font-family: Georgia, serif;
   font-size: clamp(28px, 3vw, 37px);
@@ -734,7 +956,6 @@ function getCategoryImage(category) {
 .section-heading p,
 .benefit-heading p {
   margin: 0;
-
   color: var(--muted);
   font-size: 13px;
   line-height: 1.8;
@@ -745,16 +966,12 @@ function getCategoryImage(category) {
   align-items: center;
   gap: 7px;
   flex-shrink: 0;
-
   padding-bottom: 5px;
-
   color: var(--terracotta);
   border-bottom: 1px solid #dfc3ac;
-
   font-size: 12px;
   font-weight: 700;
   text-decoration: none;
-
   transition: 0.2s ease;
 }
 
@@ -781,18 +998,13 @@ function getCategoryImage(category) {
 .visual-category-card {
   position: relative;
   display: block;
-
   min-width: 0;
   aspect-ratio: 1.25 / 1;
-
   overflow: hidden;
-
   background: #e8d9c7;
   border-radius: 14px;
-
   text-decoration: none;
   isolation: isolate;
-
   box-shadow: 0 5px 18px rgba(61, 42, 29, 0.07);
 }
 
@@ -800,10 +1012,8 @@ function getCategoryImage(category) {
   position: absolute;
   inset: 0;
   z-index: -2;
-
   width: 100%;
   height: 100%;
-
   object-fit: cover;
   transition: transform 0.6s ease;
 }
@@ -812,7 +1022,6 @@ function getCategoryImage(category) {
   position: absolute;
   inset: 0;
   z-index: -1;
-
   background: linear-gradient(
     0deg,
     rgba(35, 23, 16, 0.88) 0%,
@@ -824,11 +1033,9 @@ function getCategoryImage(category) {
 .category-card-content {
   position: absolute;
   inset: auto 0 0;
-
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-
   padding: 23px;
   color: white;
 }
@@ -837,21 +1044,17 @@ function getCategoryImage(category) {
   display: inline-block;
   margin-bottom: 8px;
   padding: 5px 10px;
-
   color: white;
   background: rgba(255, 255, 255, 0.18);
   border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 30px;
-
   font-size: 10px;
   font-weight: 600;
-
   backdrop-filter: blur(8px);
 }
 
 .category-card-content h3 {
   margin: 0 0 10px;
-
   color: white;
   font-family: Georgia, serif;
   font-size: 23px;
@@ -862,11 +1065,9 @@ function getCategoryImage(category) {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-
   color: #f4c59c;
   font-size: 11px;
   font-weight: 600;
-
   transition: gap 0.25s ease;
 }
 
@@ -909,19 +1110,15 @@ function getCategoryImage(category) {
   align-items: center;
   justify-content: center;
   gap: 10px;
-
   min-height: 46px;
   padding: 0 22px;
-
   color: var(--terracotta-dark);
   background: transparent;
   border: 1px solid #c9aa90;
   border-radius: 9px;
-
   font-size: 12px;
   font-weight: 700;
   text-decoration: none;
-
   transition: 0.25s ease;
 }
 
@@ -938,13 +1135,10 @@ function getCategoryImage(category) {
 .heritage-section {
   position: relative;
   isolation: isolate;
-
   display: flex;
   align-items: center;
-
   min-height: 400px;
   overflow: hidden;
-
   color: white;
   background: #493328;
 }
@@ -958,7 +1152,6 @@ function getCategoryImage(category) {
 .heritage-image img {
   width: 100%;
   height: 100%;
-
   object-fit: cover;
   object-position: center 45%;
 }
@@ -967,7 +1160,6 @@ function getCategoryImage(category) {
   position: absolute;
   inset: 0;
   z-index: -1;
-
   background: linear-gradient(
     90deg,
     rgba(43, 29, 20, 0.94) 0%,
@@ -979,7 +1171,6 @@ function getCategoryImage(category) {
 .heritage-content {
   width: 100%;
   max-width: 1220px;
-
   margin: 0 auto;
   padding: 75px 24px;
 }
@@ -991,7 +1182,6 @@ function getCategoryImage(category) {
 .heritage-content h2 {
   max-width: 560px;
   margin: 18px 0;
-
   color: #fffaf2;
   font-family: Georgia, serif;
   font-size: clamp(32px, 4vw, 47px);
@@ -1002,7 +1192,6 @@ function getCategoryImage(category) {
 .heritage-content p {
   max-width: 460px;
   margin-bottom: 25px;
-
   color: rgba(255, 250, 242, 0.78);
   font-size: 13px;
   line-height: 1.9;
@@ -1012,18 +1201,14 @@ function getCategoryImage(category) {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-
   min-height: 45px;
   padding: 0 20px;
-
   color: #443126;
   background: #f4e7d3;
   border-radius: 8px;
-
   font-size: 12px;
   font-weight: 700;
   text-decoration: none;
-
   transition: 0.2s ease;
 }
 
@@ -1036,13 +1221,10 @@ function getCategoryImage(category) {
   position: absolute;
   top: -100px;
   right: -90px;
-
   width: 360px;
   height: 500px;
-
   border: 1px solid rgba(235, 201, 155, 0.25);
   border-radius: 45% 55% 40% 60%;
-
   transform: rotate(30deg);
   pointer-events: none;
 }
@@ -1054,9 +1236,7 @@ function getCategoryImage(category) {
 .benefit-section {
   position: relative;
   overflow: hidden;
-
   padding: 90px 24px;
-
   background:
     radial-gradient(
       circle at 0% 100%,
@@ -1093,12 +1273,9 @@ function getCategoryImage(category) {
 .benefit-item {
   padding: 28px 20px;
   text-align: center;
-
   border: 1px solid rgba(255, 255, 255, 0.13);
   border-radius: 15px;
-
   background: rgba(255, 255, 255, 0.055);
-
   transition: 0.25s ease;
 }
 
@@ -1110,15 +1287,11 @@ function getCategoryImage(category) {
 .benefit-icon {
   display: grid;
   place-items: center;
-
   width: 58px;
   height: 58px;
-
   margin: 0 auto 18px;
-
   color: #f0d2a6;
   background: rgba(255, 255, 255, 0.09);
-
   border: 1px solid rgba(240, 210, 166, 0.2);
   border-radius: 17px;
 }
@@ -1132,7 +1305,6 @@ function getCategoryImage(category) {
 .benefit-item p {
   max-width: 230px;
   margin: 0 auto;
-
   color: rgba(255, 250, 242, 0.68);
   font-size: 12px;
   line-height: 1.8;
@@ -1155,14 +1327,11 @@ function getCategoryImage(category) {
 .artisan-card {
   display: grid;
   grid-template-columns: 0.95fr 1fr;
-
   min-height: 260px;
   overflow: hidden;
-
   background: #faf6ef;
   border: 1px solid #eee4d8;
   border-radius: 15px;
-
   transition: 0.25s ease;
 }
 
@@ -1205,7 +1374,6 @@ function getCategoryImage(category) {
 
 .artisan-content h3 {
   margin: 12px 0;
-
   color: var(--brown);
   font-family: Georgia, serif;
   font-size: 23px;
@@ -1213,7 +1381,6 @@ function getCategoryImage(category) {
 
 .artisan-content p {
   margin: 0 0 18px;
-
   color: var(--muted);
   font-size: 12px;
   line-height: 1.8;
@@ -1223,7 +1390,6 @@ function getCategoryImage(category) {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-
   color: var(--terracotta);
   font-size: 11px;
   font-weight: 700;
@@ -1242,11 +1408,8 @@ function getCategoryImage(category) {
   position: relative;
   isolation: isolate;
   overflow: hidden;
-
   padding: 95px 24px;
-
   color: white;
-
   background:
     radial-gradient(
       ellipse at 10% 100%,
@@ -1254,23 +1417,18 @@ function getCategoryImage(category) {
       transparent 35%
     ),
     linear-gradient(120deg, #233f32, #315b43);
-
   text-align: center;
 }
 
 .cta-pattern {
   position: absolute;
   z-index: -1;
-
   top: -160px;
   left: -90px;
-
   width: 350px;
   height: 450px;
-
   border: 1px solid rgba(231, 200, 156, 0.17);
   border-radius: 45%;
-
   transform: rotate(35deg);
 }
 
@@ -1285,7 +1443,6 @@ function getCategoryImage(category) {
 
 .cta-content h2 {
   margin: 20px 0;
-
   color: #fffaf2;
   font-family: Georgia, serif;
   font-size: clamp(31px, 4vw, 45px);
@@ -1296,7 +1453,6 @@ function getCategoryImage(category) {
 .cta-content p {
   max-width: 550px;
   margin: 0 auto;
-
   color: rgba(255, 250, 242, 0.75);
   font-size: 13px;
   line-height: 1.9;
@@ -1307,25 +1463,63 @@ function getCategoryImage(category) {
   align-items: center;
   justify-content: center;
   gap: 10px;
-
   min-height: 49px;
   margin-top: 30px;
   padding: 0 23px;
-
   color: var(--forest);
   background: #fffaf2;
   border-radius: 9px;
-
   font-size: 13px;
   font-weight: 700;
   text-decoration: none;
-
   transition: 0.25s ease;
 }
 
 .btn-light:hover {
   background: #f1dfc8;
   transform: translateY(-3px);
+}
+
+/* ==========================================
+   DYNAMIC DATA STATES
+========================================== */
+
+.category-image-placeholder,
+.artisan-image-placeholder {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  min-height: 180px;
+  color: #a64d27;
+  background: linear-gradient(135deg, #f0e5d6, #e5d2bd);
+}
+
+.category-image-placeholder {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+}
+
+.artisan-image-placeholder {
+  min-height: 260px;
+}
+
+.home-empty-state,
+.home-loading {
+  grid-column: 1 / -1;
+  padding: 30px 20px;
+  color: #89796d;
+  background: #faf5ed;
+  border: 1px dashed #ddcbbb;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.7;
+  text-align: center;
+}
+
+.home-loading {
+  border-style: solid;
 }
 
 /* ==========================================
@@ -1408,7 +1602,6 @@ function getCategoryImage(category) {
   .hero-bottom-info {
     gap: 17px;
     min-height: 100px;
-
     margin-top: -25px;
     padding: 28px 5px 15px;
   }
