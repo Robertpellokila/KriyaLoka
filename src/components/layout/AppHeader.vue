@@ -45,11 +45,9 @@ const route = useRoute();
 const searchQuery = ref("");
 const mobileMenuOpen = ref(false);
 
-// Search sheet pada bottom navigation (mobile, pembeli)
 const searchOpen = ref(false);
 const mobileSearchRef = ref(null);
 
-// Liquid navigation
 const desktopNav = ref(null);
 const navItems = ref([]);
 
@@ -59,6 +57,8 @@ const indicatorStyle = ref({
 });
 
 const indicatorReady = ref(false);
+
+const profileOpen = ref(false);
 
 // ==========================================
 // ROLE NAVIGATION
@@ -74,8 +74,6 @@ const dashboardPath = computed(() => {
   return destinations[authStore.role] || "/";
 });
 
-// Pembeli (login sebagai buyer) dan tamu memakai tampilan mobile
-// dengan bottom navigation. Seller & admin tetap memakai menu hamburger.
 const isShopper = computed(
   () => !authStore.isAuthenticated || authStore.role === "buyer",
 );
@@ -84,21 +82,17 @@ const isShopper = computed(
 // LIQUID NAVIGATION
 // ==========================================
 
-// Menentukan menu aktif berdasarkan URL
 const activeNavIndex = computed(() => {
   if (route.path === "/") return 0;
-
   if (route.path === "/katalog") return 1;
 
   return -1;
 });
 
-// Index aktif untuk bottom navigation (4 = tombol cari)
 const mobileActiveIndex = computed(() =>
   searchOpen.value ? 4 : activeNavIndex.value,
 );
 
-// Menyimpan elemen menu berdasarkan index
 function setNavItem(element, index) {
   if (element?.$el) {
     element = element.$el;
@@ -107,21 +101,30 @@ function setNavItem(element, index) {
   navItems.value[index] = element || null;
 }
 
-// Popup profil (mobile, pembeli)
-const profileOpen = ref(false);
+// ==========================================
+// PROFILE
+// ==========================================
 
 function toggleProfile() {
   profileOpen.value = !profileOpen.value;
-  if (profileOpen.value) searchOpen.value = false;
+
+  if (profileOpen.value) {
+    searchOpen.value = false;
+  }
 }
 
 async function handleLogout() {
   profileOpen.value = false;
+
   await authStore.logout();
+
   router.push("/");
 }
 
-// Menghitung posisi indikator
+// ==========================================
+// LIQUID INDICATOR
+// ==========================================
+
 async function updateLiquidIndicator() {
   await nextTick();
 
@@ -143,17 +146,15 @@ async function updateLiquidIndicator() {
   const itemRect = activeItem.getBoundingClientRect();
 
   const left = itemRect.left - navRect.left;
-  const width = itemRect.width;
 
   indicatorStyle.value = {
-    width: `${width}px`,
+    width: `${itemRect.width}px`,
     transform: `translate3d(${left}px, -50%, 0)`,
   };
 
   indicatorReady.value = true;
 }
 
-// Memperbarui posisi ketika ukuran layar berubah
 function handleResize() {
   updateLiquidIndicator();
 }
@@ -179,9 +180,16 @@ function toggleSearch() {
 
   if (searchOpen.value) {
     profileOpen.value = false;
-    nextTick(() => mobileSearchRef.value?.focus());
+
+    nextTick(() => {
+      mobileSearchRef.value?.focus();
+    });
   }
 }
+
+// ==========================================
+// CLOSE MENU
+// ==========================================
 
 function closeMenu() {
   mobileMenuOpen.value = false;
@@ -196,13 +204,16 @@ function onKeydown(event) {
   }
 }
 
-// Memberi ruang di bawah halaman agar konten tidak tertutup bottom nav
+// ==========================================
+// BODY CLASS
+// ==========================================
+
 function syncBodyClass() {
   document.body.classList.toggle("has-bottom-nav", isShopper.value);
 }
 
 // ==========================================
-// WATCH ROUTE
+// WATCHERS
 // ==========================================
 
 watch(
@@ -230,6 +241,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener("resize", handleResize);
   window.removeEventListener("keydown", onKeydown);
+
   document.body.classList.remove("has-bottom-nav");
 });
 </script>
@@ -237,9 +249,7 @@ onBeforeUnmount(() => {
 <template>
   <header class="site-header" :class="{ shopper: isShopper }">
     <div class="header-inner container">
-      <!-- ==================================
-           BRAND
-      =================================== -->
+      <!-- BRAND -->
 
       <RouterLink to="/" class="brand" @click="closeMenu">
         <span class="brand-symbol">K</span>
@@ -247,9 +257,7 @@ onBeforeUnmount(() => {
         <span class="brand-name"> Kriya<span>Loka</span> </span>
       </RouterLink>
 
-      <!-- ==================================
-           DESKTOP SEARCH
-      =================================== -->
+      <!-- DESKTOP SEARCH -->
 
       <form class="header-search" @submit.prevent="searchProducts">
         <Search :size="19" />
@@ -263,21 +271,14 @@ onBeforeUnmount(() => {
         <button type="submit" aria-label="Cari">Cari</button>
       </form>
 
-      <!-- ==================================
-           DESKTOP NAVIGATION
-           LIQUID EFFECT
-      =================================== -->
+      <!-- DESKTOP NAVIGATION -->
 
       <nav ref="desktopNav" class="desktop-nav liquid-nav">
-        <!-- Liquid Indicator -->
-
         <span
           class="liquid-indicator"
           :class="{ ready: indicatorReady }"
           :style="indicatorStyle"
         ></span>
-
-        <!-- Beranda -->
 
         <RouterLink
           :ref="(el) => setNavItem(el, 0)"
@@ -289,8 +290,6 @@ onBeforeUnmount(() => {
           Beranda
         </RouterLink>
 
-        <!-- Produk -->
-
         <RouterLink
           :ref="(el) => setNavItem(el, 1)"
           to="/katalog"
@@ -301,27 +300,17 @@ onBeforeUnmount(() => {
           Produk
         </RouterLink>
 
-        <!-- Produk Unggulan -->
-
         <a href="/#produk"> Produk Unggulan </a>
-
-        <!-- Tentang Pengrajin -->
 
         <a href="/#pengrajin"> Kontak </a>
       </nav>
 
-      <!-- ==================================
-           HEADER ACTIONS
-      =================================== -->
+      <!-- HEADER ACTIONS -->
 
       <div class="header-actions">
-        <!-- Notification khusus buyer -->
-
         <NotificationBell
           v-if="authStore.isAuthenticated && authStore.role === 'buyer'"
         />
-
-        <!-- Cart -->
 
         <RouterLink
           to="/keranjang"
@@ -335,7 +324,7 @@ onBeforeUnmount(() => {
           </span>
         </RouterLink>
 
-        <!-- Guest -->
+        <!-- GUEST -->
 
         <template v-if="!authStore.isAuthenticated">
           <RouterLink to="/login" class="btn-login"> Masuk </RouterLink>
@@ -343,11 +332,9 @@ onBeforeUnmount(() => {
           <RouterLink to="/register" class="btn-register"> Daftar </RouterLink>
         </template>
 
-        <!-- Authenticated User -->
+        <!-- AUTHENTICATED -->
 
         <template v-else>
-          <!-- Buyer: User Icon -->
-
           <RouterLink
             v-if="authStore.role === 'buyer'"
             :to="dashboardPath"
@@ -358,14 +345,12 @@ onBeforeUnmount(() => {
             <UserRound :size="22" />
           </RouterLink>
 
-          <!-- Seller & Admin: Dashboard -->
-
           <RouterLink v-else :to="dashboardPath" class="btn-dashboard">
             Dashboard
           </RouterLink>
         </template>
 
-        <!-- Mobile Menu Button -->
+        <!-- MOBILE MENU BUTTON -->
 
         <button
           class="icon-button mobile-menu-button"
@@ -374,15 +359,12 @@ onBeforeUnmount(() => {
           :aria-expanded="mobileMenuOpen"
         >
           <X v-if="mobileMenuOpen" :size="23" />
-
           <Menu v-else :size="23" />
         </button>
       </div>
     </div>
 
-    <!-- ==================================
-         MOBILE NAVIGATION (seller & admin)
-    =================================== -->
+    <!-- MOBILE NAVIGATION SELLER & ADMIN -->
 
     <Transition name="mobile-dropdown">
       <div v-if="mobileMenuOpen && !isShopper" class="mobile-nav">
@@ -396,13 +378,9 @@ onBeforeUnmount(() => {
 
         <RouterLink to="/keranjang" @click="closeMenu"> Keranjang </RouterLink>
 
-        <!-- Authenticated -->
-
         <RouterLink :to="dashboardPath" @click="closeMenu">
           Dashboard
         </RouterLink>
-
-        <!-- Mobile Search -->
 
         <form class="mobile-search" @submit.prevent="searchProducts">
           <input
@@ -421,14 +399,16 @@ onBeforeUnmount(() => {
         </form>
       </div>
     </Transition>
+  </header>
 
-    <!-- ==================================
-         MOBILE SHOPPER LAYOUT
-         (tamu & pembeli, hanya tampil <= 900px)
-    =================================== -->
+  <!-- ==========================================
+       MOBILE SHOPPER
+       DIPINDAHKAN LANGSUNG KE BODY
+  =========================================== -->
 
+  <Teleport to="body">
     <div v-if="isShopper" class="shopper-mobile">
-      <!-- Floating kiri atas: keranjang -->
+      <!-- FLOATING CART -->
 
       <RouterLink
         to="/keranjang"
@@ -442,21 +422,23 @@ onBeforeUnmount(() => {
         </span>
       </RouterLink>
 
-      <!-- Floating tengah atas: logo -->
+      <!-- FLOATING BRAND -->
 
       <RouterLink to="/" class="float-brand" aria-label="KriyaLoka">
         <span class="brand-symbol">K</span>
+
         <span class="brand-name"> Kriya<span>Loka</span> </span>
       </RouterLink>
 
-      <!-- Floating kanan atas: notifikasi + profil -->
+      <!-- FLOATING RIGHT -->
 
       <div class="float-right">
         <div v-if="authStore.isAuthenticated" class="float-bell">
           <NotificationBell />
         </div>
 
-        <!-- Tamu: langsung ke halaman login -->
+        <!-- GUEST -->
+
         <RouterLink
           v-if="!authStore.isAuthenticated"
           to="/login"
@@ -466,7 +448,8 @@ onBeforeUnmount(() => {
           <UserRound :size="21" />
         </RouterLink>
 
-        <!-- Pembeli: buka popup profil -->
+        <!-- BUYER PROFILE -->
+
         <div v-else class="float-profile">
           <button
             type="button"
@@ -506,7 +489,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <!-- Search sheet -->
+      <!-- SEARCH SCRIM -->
 
       <Transition name="fade">
         <div
@@ -516,6 +499,8 @@ onBeforeUnmount(() => {
         ></div>
       </Transition>
 
+      <!-- PROFILE SCRIM -->
+
       <Transition name="fade">
         <div
           v-if="profileOpen"
@@ -523,6 +508,8 @@ onBeforeUnmount(() => {
           @click="profileOpen = false"
         ></div>
       </Transition>
+
+      <!-- SEARCH SHEET -->
 
       <Transition name="sheet">
         <form
@@ -544,12 +531,14 @@ onBeforeUnmount(() => {
         </form>
       </Transition>
 
-      <!-- Bottom navigation -->
+      <!-- BOTTOM NAVIGATION -->
 
       <nav
         class="bottom-nav"
         aria-label="Navigasi utama"
-        :style="{ '--index': Math.max(mobileActiveIndex, 0) }"
+        :style="{
+          '--index': Math.max(mobileActiveIndex, 0),
+        }"
       >
         <span
           class="bottom-indicator"
@@ -598,10 +587,11 @@ onBeforeUnmount(() => {
         </button>
       </nav>
     </div>
-  </header>
+  </Teleport>
 </template>
 
-<!-- Ruang di bawah halaman agar footer/konten tidak tertutup bottom nav -->
+<!-- GLOBAL BODY SPACING -->
+
 <style>
 @media (max-width: 900px) {
   body.has-bottom-nav {
@@ -645,9 +635,7 @@ onBeforeUnmount(() => {
     0 3px 10px rgba(48, 31, 20, 0.04);
 }
 
-/* ========================================
-   HEADER INNER
-======================================== */
+/* HEADER INNER */
 
 .header-inner {
   width: 100%;
@@ -665,9 +653,7 @@ onBeforeUnmount(() => {
   gap: 24px;
 }
 
-/* ========================================
-   BRAND
-======================================== */
+/* BRAND */
 
 .brand {
   display: inline-flex;
@@ -708,9 +694,7 @@ onBeforeUnmount(() => {
   color: #943c14;
 }
 
-/* ========================================
-   SEARCH
-======================================== */
+/* SEARCH */
 
 .header-search {
   display: flex;
@@ -766,9 +750,7 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-/* ========================================
-   DESKTOP NAVIGATION
-======================================== */
+/* DESKTOP NAVIGATION */
 
 .desktop-nav {
   display: flex;
@@ -779,22 +761,7 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.desktop-nav a {
-  position: relative;
-
-  color: #66584f;
-
-  text-decoration: none;
-
-  font-size: 13px;
-  font-weight: 600;
-
-  transition: color 0.2s ease;
-}
-
-/* ========================================
-   LIQUID NAVIGATION
-======================================== */
+/* LIQUID NAVIGATION */
 
 .liquid-nav {
   position: relative;
@@ -803,8 +770,6 @@ onBeforeUnmount(() => {
   padding: 7px;
   gap: 5px;
 }
-
-/* Liquid indicator */
 
 .liquid-indicator {
   position: absolute;
@@ -835,8 +800,6 @@ onBeforeUnmount(() => {
   opacity: 1;
 }
 
-/* Light reflection */
-
 .liquid-indicator::before {
   content: "";
 
@@ -854,8 +817,6 @@ onBeforeUnmount(() => {
 
   filter: blur(5px);
 }
-
-/* Nav links */
 
 .liquid-nav > a {
   position: relative;
@@ -876,35 +837,25 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-/* Override RouterLink active background */
-
 .liquid-nav > a.router-link-active {
   color: #66584f;
   background: transparent;
 }
 
-/* Active menu */
-
 .liquid-nav > a.is-liquid-active {
   color: #fff;
 }
-
-/* Hover */
 
 .liquid-nav > a:not(.is-liquid-active):hover {
   color: #943c14;
   transform: translateY(-1px);
 }
 
-/* Press effect */
-
 .liquid-nav > a:active {
   transform: scale(0.96);
 }
 
-/* ========================================
-   HEADER ACTIONS
-======================================== */
+/* HEADER ACTIONS */
 
 .header-actions {
   display: flex;
@@ -914,9 +865,7 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
-/* ========================================
-   CART
-======================================== */
+/* CART */
 
 .cart-link {
   position: relative;
@@ -964,9 +913,7 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 
-/* ========================================
-   ACCOUNT BUTTON - BUYER
-======================================== */
+/* ACCOUNT */
 
 .btn-account {
   display: inline-flex;
@@ -1003,9 +950,7 @@ onBeforeUnmount(() => {
   color: white;
 }
 
-/* ========================================
-   DASHBOARD & REGISTER BUTTON
-======================================== */
+/* DASHBOARD & REGISTER */
 
 .btn-dashboard,
 .btn-register {
@@ -1040,9 +985,7 @@ onBeforeUnmount(() => {
   transform: translateY(-2px);
 }
 
-/* ========================================
-   LOGIN BUTTON
-======================================== */
+/* LOGIN */
 
 .btn-login {
   color: #943c14;
@@ -1053,17 +996,13 @@ onBeforeUnmount(() => {
   text-decoration: none;
 }
 
-/* ========================================
-   MOBILE MENU BUTTON
-======================================== */
+/* MOBILE MENU BUTTON */
 
 .mobile-menu-button {
   display: none;
 }
 
-/* ========================================
-   MOBILE NAVIGATION (seller & admin)
-======================================== */
+/* MOBILE NAVIGATION SELLER & ADMIN */
 
 .mobile-nav {
   position: absolute;
@@ -1110,9 +1049,7 @@ onBeforeUnmount(() => {
   color: #943c14;
 }
 
-/* ========================================
-   MOBILE SEARCH (seller & admin)
-======================================== */
+/* MOBILE SEARCH SELLER & ADMIN */
 
 .mobile-search {
   display: flex;
@@ -1152,9 +1089,7 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-/* ========================================
-   MOBILE DROPDOWN TRANSITION
-======================================== */
+/* MOBILE DROPDOWN TRANSITION */
 
 .mobile-dropdown-enter-active,
 .mobile-dropdown-leave-active {
@@ -1169,17 +1104,14 @@ onBeforeUnmount(() => {
   transform: translateY(-8px) scale(0.98);
 }
 
-/* ========================================
-   MOBILE SHOPPER LAYOUT
-   (disembunyikan di desktop)
-======================================== */
+/* SHOPPER MOBILE */
 
 .shopper-mobile {
   display: none;
 }
 
 /* ========================================
-   RESPONSIVE - TABLET
+   TABLET
 ======================================== */
 
 @media (max-width: 1100px) {
@@ -1203,7 +1135,7 @@ onBeforeUnmount(() => {
 }
 
 /* ========================================
-   RESPONSIVE - MOBILE
+   MOBILE
 ======================================== */
 
 @media (max-width: 900px) {
@@ -1231,23 +1163,21 @@ onBeforeUnmount(() => {
     justify-content: space-between;
   }
 
-  /* ----------------------------------------
-     Tamu & pembeli: header lama disembunyikan,
-     diganti elemen floating.
-     backdrop-filter dimatikan karena membuat
-     elemen fixed di dalamnya ikut "terjebak"
-     di dalam header.
-  ---------------------------------------- */
+  /* HEADER SHOPPER DISEMBUNYIKAN */
 
   .site-header.shopper {
     position: static;
+
     width: 100%;
     height: 0;
+
     margin: 0;
 
     background: transparent;
+
     border: 0;
     border-radius: 0;
+
     box-shadow: none;
 
     backdrop-filter: none;
@@ -1262,17 +1192,20 @@ onBeforeUnmount(() => {
     display: none;
   }
 
+  /* TELEPORTED SHOPPER LAYOUT */
+
   .shopper-mobile {
     display: block;
   }
 
-  /* ---------- Tombol floating atas ---------- */
+  /* FLOAT BUTTON */
 
   .float-btn {
-    position: fixed;
+    position: fixed !important;
     z-index: 1000;
 
     top: calc(12px + env(safe-area-inset-top, 0px));
+    bottom: auto !important;
 
     display: grid;
     place-items: center;
@@ -1314,6 +1247,8 @@ onBeforeUnmount(() => {
     left: 14px;
   }
 
+  /* FLOAT RIGHT */
+
   .float-right {
     position: fixed;
     z-index: 1000;
@@ -1326,12 +1261,14 @@ onBeforeUnmount(() => {
     gap: 10px;
   }
 
-  /* Tombol profil berada di dalam .float-right,
-     jadi posisinya relatif terhadap grup tersebut */
   .float-right .float-btn {
-    position: relative;
-    top: auto;
+    position: relative !important;
+
+    top: auto !important;
+    bottom: auto !important;
   }
+
+  /* NOTIFICATION */
 
   .float-bell {
     display: grid;
@@ -1349,15 +1286,12 @@ onBeforeUnmount(() => {
     box-shadow:
       0 8px 22px rgba(48, 31, 20, 0.14),
       0 2px 6px rgba(48, 31, 20, 0.06);
-
-    /* backdrop-filter DIHAPUS: membuat dropdown/overlay fixed
-     milik NotificationBell terjebak di dalam lingkaran ini */
   }
 
-  /* Netralkan lapisan milik komponen NotificationBell */
   .float-bell :deep(.notification-wrapper) {
     width: 100%;
     height: 100%;
+
     display: grid;
     place-items: center;
   }
@@ -1369,40 +1303,51 @@ onBeforeUnmount(() => {
     background: transparent !important;
     border: 0 !important;
     box-shadow: none !important;
+
     border-radius: 50%;
   }
 
+  /* TOP BACKGROUND */
+
   .shopper-mobile::before {
     content: "";
+
     position: fixed;
     z-index: 999;
+
     top: 0;
     left: 0;
     right: 0;
+
     height: calc(70px + env(safe-area-inset-top, 0px));
+
     background: linear-gradient(
       to bottom,
       rgba(253, 250, 247, 0.95) 40%,
       transparent
     );
+
     pointer-events: none;
   }
 
-  /* Logo tengah atas (hapus blok ini kalau tidak diperlukan) */
+  /* FLOAT BRAND */
 
   .float-brand {
     position: fixed;
     z-index: 1000;
 
     top: calc(12px + env(safe-area-inset-top, 0px));
+
     left: 50%;
-    transform: translateX(-50%);
+
+    transform: translate3d(-50%, 0, 0);
 
     display: inline-flex;
     align-items: center;
     gap: 7px;
 
     height: 46px;
+
     padding: 0 14px 0 7px;
 
     background: rgba(255, 255, 255, 0.94);
@@ -1433,17 +1378,28 @@ onBeforeUnmount(() => {
     letter-spacing: -0.5px;
   }
 
-  /* ---------- Bottom navigation ---------- */
+  /* ========================================
+     BOTTOM NAVIGATION
+     PERBAIKAN UTAMA ANDROID
+  ======================================== */
 
   .bottom-nav {
-    position: fixed;
+    position: fixed !important;
+
     z-index: 1001;
 
-    left: 50%;
-    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
-    transform: translateX(-50%);
+    top: auto !important;
+
+    left: 50% !important;
+
+    right: auto !important;
+
+    bottom: calc(14px + env(safe-area-inset-bottom, 0px)) !important;
+
+    transform: translate3d(-50%, 0, 0) !important;
 
     width: min(440px, calc(100% - 28px));
+
     padding: 6px;
 
     display: grid;
@@ -1464,7 +1420,7 @@ onBeforeUnmount(() => {
     isolation: isolate;
   }
 
-  /* Indikator cair yang bergeser antar menu */
+  /* BOTTOM INDICATOR */
 
   .bottom-indicator {
     position: absolute;
@@ -1477,9 +1433,11 @@ onBeforeUnmount(() => {
     width: calc((100% - 12px) / 5);
 
     border-radius: 18px;
+
     background: #943c14;
 
     opacity: 0;
+
     transform: translateX(calc(var(--index, 0) * 100%));
 
     transition:
@@ -1487,6 +1445,7 @@ onBeforeUnmount(() => {
       opacity 0.2s ease;
 
     pointer-events: none;
+
     will-change: transform;
   }
 
@@ -1498,6 +1457,7 @@ onBeforeUnmount(() => {
     content: "";
 
     position: absolute;
+
     top: 3px;
     left: 14%;
     right: 14%;
@@ -1505,21 +1465,27 @@ onBeforeUnmount(() => {
     height: 8px;
 
     border-radius: 999px;
+
     background: rgba(255, 255, 255, 0.17);
 
     filter: blur(5px);
   }
 
+  /* BOTTOM ITEMS */
+
   .bottom-item {
     display: flex;
     flex-direction: column;
+
     align-items: center;
     justify-content: center;
+
     gap: 4px;
 
     padding: 10px 0 9px;
 
     border: 0;
+
     background: transparent;
 
     color: #66584f;
@@ -1531,6 +1497,7 @@ onBeforeUnmount(() => {
     text-decoration: none;
 
     cursor: pointer;
+
     -webkit-tap-highlight-color: transparent;
 
     transition:
@@ -1561,26 +1528,35 @@ onBeforeUnmount(() => {
     outline-offset: 2px;
   }
 
-  /* ---------- Search sheet ---------- */
+  /* SEARCH SCRIM */
 
   .search-scrim {
     position: fixed;
+
     inset: 0;
+
     z-index: 999;
 
     background: rgba(48, 31, 20, 0.22);
   }
 
+  /* BOTTOM SEARCH */
+
   .bottom-search {
     position: fixed;
+
     z-index: 1002;
 
     left: 50%;
+
     bottom: calc(14px + 76px + 12px + env(safe-area-inset-bottom, 0px));
-    transform: translateX(-50%);
+
+    transform: translate3d(-50%, 0, 0);
 
     width: min(440px, calc(100% - 28px));
+
     height: 54px;
+
     padding: 0 8px 0 16px;
 
     display: flex;
@@ -1602,6 +1578,7 @@ onBeforeUnmount(() => {
 
   .bottom-search:focus-within {
     border-color: #943c14;
+
     box-shadow:
       0 0 0 4px rgba(148, 60, 20, 0.1),
       0 14px 36px rgba(48, 31, 20, 0.18);
@@ -1618,12 +1595,12 @@ onBeforeUnmount(() => {
     color: #382b24;
 
     font: inherit;
-    /* 16px agar iOS tidak melakukan zoom otomatis saat fokus */
     font-size: 16px;
   }
 
   .bottom-search button {
     height: 38px;
+
     padding: 0 16px;
 
     border: 0;
@@ -1639,6 +1616,8 @@ onBeforeUnmount(() => {
     cursor: pointer;
   }
 
+  /* FADE */
+
   .fade-enter-active,
   .fade-leave-active {
     transition: opacity 0.25s ease;
@@ -1648,6 +1627,8 @@ onBeforeUnmount(() => {
   .fade-leave-to {
     opacity: 0;
   }
+
+  /* SHEET */
 
   .sheet-enter-active,
   .sheet-leave-active {
@@ -1659,13 +1640,12 @@ onBeforeUnmount(() => {
   .sheet-enter-from,
   .sheet-leave-to {
     opacity: 0;
-    transform: translateX(-50%) translateY(18px) scale(0.97);
+
+    transform: translate3d(-50%, 18px, 0) scale(0.97);
   }
 }
 
-/* ========================================
-   SMALL MOBILE
-======================================== */
+/* SMALL MOBILE */
 
 @media (max-width: 600px) {
   .site-header {
@@ -1728,7 +1708,6 @@ onBeforeUnmount(() => {
     height: 36px;
   }
 
-  /* Header tamu & pembeli tetap tanpa kotak, dikontrol layout floating */
   .site-header.shopper {
     width: 100%;
     margin: 0;
@@ -1736,9 +1715,15 @@ onBeforeUnmount(() => {
   }
 }
 
-/* ========================================
-   REDUCED MOTION
-======================================== */
+/* DESKTOP: SHOPPER MOBILE DISEMBUNYIKAN */
+
+@media (min-width: 901px) {
+  .shopper-mobile {
+    display: none;
+  }
+}
+
+/* REDUCED MOTION */
 
 @media (prefers-reduced-motion: reduce) {
   .liquid-indicator,
@@ -1761,7 +1746,9 @@ onBeforeUnmount(() => {
   }
 }
 
-/* ---------- Popup profil ---------- */
+/* ========================================
+   PROFILE POPUP
+======================================== */
 
 .float-profile {
   position: relative;
@@ -1779,10 +1766,12 @@ onBeforeUnmount(() => {
 
 .profile-menu {
   position: absolute;
+
   top: calc(100% + 10px);
   right: 0;
 
   width: 190px;
+
   padding: 6px;
 
   display: flex;
@@ -1804,10 +1793,12 @@ onBeforeUnmount(() => {
 .profile-item {
   display: flex;
   align-items: center;
+
   gap: 10px;
 
   width: 100%;
-  padding: 12px 12px;
+
+  padding: 12px;
 
   border: 0;
   border-radius: 11px;
@@ -1818,11 +1809,11 @@ onBeforeUnmount(() => {
   font: inherit;
   font-size: 14px;
   font-weight: 600;
+
   text-align: left;
   text-decoration: none;
 
   cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
 
   transition:
     background 0.2s ease,
@@ -1844,6 +1835,8 @@ onBeforeUnmount(() => {
   background: #fef3f2;
   color: #b42318;
 }
+
+/* PROFILE POPUP TRANSITION */
 
 .pop-enter-active,
 .pop-leave-active {
