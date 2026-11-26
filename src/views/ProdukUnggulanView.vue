@@ -33,16 +33,18 @@ const unggulanList = computed(() => {
   return (featured.length ? featured : published).slice(0, 8);
 });
 
-// Precompute gambar & harga sekali per daftar produk unggulan
 const enrichedList = computed(() => {
   return unggulanList.value.map((product) => {
     const imgs = product?.product_images;
     let imageUrl = product?.image_url || "";
 
     if (Array.isArray(imgs) && imgs.length) {
-      const sorted = imgs.length > 1
-        ? [...imgs].sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0))
-        : imgs;
+      const sorted =
+        imgs.length > 1
+          ? [...imgs].sort(
+              (a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0),
+            )
+          : imgs;
       imageUrl = sorted[0]?.image_url || imageUrl;
     }
 
@@ -57,11 +59,17 @@ const enrichedList = computed(() => {
 });
 
 const categories = computed(() => {
-  const set = new Set();
+  const counts = new Map();
   for (const item of enrichedList.value) {
-    if (item.category) set.add(item.category);
+    if (!item.category) continue;
+    counts.set(item.category, (counts.get(item.category) || 0) + 1);
   }
-  return ["Semua", ...set];
+
+  const sortedCategories = Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "id"))
+    .map(([cat]) => cat);
+
+  return ["Semua", ...sortedCategories];
 });
 
 const filteredList = computed(() => {
@@ -96,7 +104,7 @@ onMounted(async () => {
 <template>
   <section class="unggulan-wrap">
     <div class="unggulan-top">
-      <div>
+      <div class="unggulan-heading">
         <span class="unggulan-pill-eyebrow">
           <Sparkles :size="13" />
           PRODUK UNGGULAN
@@ -236,7 +244,10 @@ onMounted(async () => {
   font-size: 12px;
   font-weight: 700;
   text-decoration: none;
-  transition: border-color 0.18s ease, color 0.18s ease;
+  white-space: nowrap;
+  transition:
+    border-color 0.18s ease,
+    color 0.18s ease;
 }
 
 .unggulan-pill-btn:hover {
@@ -260,7 +271,10 @@ onMounted(async () => {
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+  transition:
+    background-color 0.18s ease,
+    color 0.18s ease,
+    border-color 0.18s ease;
 }
 
 .unggulan-chip.active {
@@ -282,7 +296,9 @@ onMounted(async () => {
   border-radius: 16px;
   border: 1px solid #ece5dd;
   background: #ffffff;
-  transition: transform 0.18s ease, border-color 0.18s ease;
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease;
 }
 
 .unggulan-card:hover {
@@ -363,6 +379,7 @@ onMounted(async () => {
   font-family: Georgia, serif;
   font-size: 16px;
   font-weight: 600;
+  line-height: 1.35;
 }
 
 .unggulan-foot {
@@ -391,6 +408,7 @@ onMounted(async () => {
   font-size: 12px;
   font-weight: 700;
   text-decoration: none;
+  white-space: nowrap;
 }
 
 .unggulan-action-pill:hover {
@@ -414,8 +432,77 @@ onMounted(async () => {
 }
 
 @media (max-width: 600px) {
+  .unggulan-wrap {
+    padding: 20px 16px 64px;
+  }
+
+  .unggulan-top {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .unggulan-top h2 {
+    margin: 8px 0 4px;
+    font-size: 24px;
+  }
+
+  .unggulan-pill-btn {
+    padding: 8px 14px;
+    font-size: 11.5px;
+  }
+
+  .unggulan-filters {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    gap: 7px;
+    margin-bottom: 18px;
+    margin-right: -16px;
+    padding: 2px 16px 4px 0;
+  }
+
+  .unggulan-filters::-webkit-scrollbar {
+    display: none;
+  }
+
+  .unggulan-chip {
+    flex-shrink: 0;
+    padding: 7px 14px;
+    font-size: 11.5px;
+  }
+
   .unggulan-grid {
     grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .unggulan-card {
+    border-radius: 18px;
+  }
+
+  .unggulan-body {
+    padding: 14px;
+  }
+
+  .unggulan-body h3 {
+    margin: 5px 0 12px;
+    font-size: 15px;
+  }
+
+  .unggulan-foot {
+    padding-top: 10px;
+  }
+
+  .unggulan-foot strong {
+    font-size: 13.5px;
+  }
+
+  .unggulan-action-pill {
+    padding: 6px 13px;
+    font-size: 11.5px;
   }
 }
 </style>
