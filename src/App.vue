@@ -4,8 +4,24 @@ import { useRoute } from "vue-router";
 
 import PublicLayout from "./layouts/PublicLayout.vue";
 import AuthLayout from "./layouts/AuthLayout.vue";
+import SplashScreen from "@/components/SplashScreen.vue";
 
 const route = useRoute();
+
+// ==========================================
+// SPLASH SCREEN
+// ==========================================
+
+const showSplash = ref(!sessionStorage.getItem("kriyaloka-splash-seen"));
+
+function finishSplash() {
+  sessionStorage.setItem("kriyaloka-splash-seen", "true");
+  showSplash.value = false;
+}
+
+// ==========================================
+// ONLINE / OFFLINE DETECTION
+// ==========================================
 
 const isOnline = ref(navigator.onLine);
 
@@ -26,22 +42,63 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="app-shell">
-    <!-- Layout aplikasi -->
+    <!-- ================================== -->
+    <!-- LAYOUT APLIKASI -->
+    <!-- ================================== -->
+
     <AuthLayout v-if="route.meta.authLayout" />
     <PublicLayout v-else-if="!route.meta.hidePublicLayout" />
     <RouterView v-else />
 
-    <!-- Indikator offline, tidak menutupi aplikasi -->
+    <!-- ================================== -->
+    <!-- INDIKATOR OFFLINE -->
+    <!-- ================================== -->
+
     <Transition name="offline-transition">
       <div v-if="!isOnline" class="offline-indicator">
         <span class="offline-dot"></span>
         <span>Kamu sedang offline</span>
       </div>
     </Transition>
+
+    <!-- ================================== -->
+    <!-- SPLASH SCREEN -->
+    <!-- ================================== -->
+
+    <Transition name="splash-reveal">
+      <SplashScreen v-if="showSplash" @finish="finishSplash" />
+    </Transition>
   </div>
 </template>
 
 <style>
+/* ==========================================
+   SPLASH SCREEN - SMOOTH FADE OUT
+========================================== */
+
+.splash-reveal-enter-active {
+  transition: opacity 0.3s ease;
+}
+
+.splash-reveal-leave-active {
+  transition: opacity 0.9s ease-in-out;
+  will-change: opacity;
+}
+
+.splash-reveal-leave-to {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .splash-reveal-enter-active,
+  .splash-reveal-leave-active {
+    transition-duration: 0.01ms;
+  }
+}
+/* ==========================================
+   OFFLINE INDICATOR
+========================================== */
+
 .offline-indicator {
   position: fixed;
   left: 50%;
