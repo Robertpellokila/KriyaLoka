@@ -16,6 +16,7 @@ import SellerDashboardView from "../views/SellerDashboardView.vue";
 import SellerStoreView from "../views/SellerStoreView.vue";
 import SellerProductFormView from "../views/SellerProductFormView.vue";
 import SellerProductsView from "../views/SellerProductsView.vue";
+import UserManagement from "../views/UserManagement.vue";
 
 import DashboardLayout from "../layouts/DashboardLayout.vue";
 import AdminLayout from "../layouts/AdminLayout.vue";
@@ -245,7 +246,7 @@ const routes = [
       {
         path: "pengguna",
         name: "admin-users",
-        component: DashboardSectionView,
+        component: UserManagement,
         meta: {
           title: "Manajemen Pengguna",
           breadcrumb: "KriyaLoka / Manajemen Pengguna",
