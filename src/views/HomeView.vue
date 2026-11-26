@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, onUnmounted, toRaw } from "vue";
 import { RouterLink } from "vue-router";
 
 import {
@@ -10,6 +10,11 @@ import {
   Truck,
   Sparkles,
   Play,
+  Star,
+  MapPin,
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
 } from "lucide-vue-next";
 
 import ProductCard from "@/components/product/ProductCard.vue";
@@ -21,9 +26,21 @@ const productStore = useProductStore();
 
 const allProducts = ref([]);
 const artisans = ref([]);
+
 const loading = ref(true);
 const loadingArtisans = ref(false);
 const homeError = ref("");
+
+const activeArtisanIndex = ref(0);
+const isArtisanHovered = ref(false);
+
+const ARTISAN_INTERVAL = 3000; // 3 detik
+const artisanProgressKey = ref(0);
+
+let artisanTimer = null;
+let touchStartX = 0;
+let prefersReducedMotion = false;
+let motionQuery = null;
 
 const benefits = [
   {
@@ -72,6 +89,39 @@ function getProductImage(product) {
   );
 
   return sortedImages[0]?.image_url || "";
+}
+
+function formatReviewDate(date) {
+  if (!date) return "";
+
+  const parsedDate = new Date(date);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return "";
+  }
+
+  return parsedDate.toLocaleDateString("id-ID", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function getMapsUrl(artisan) {
+  if (artisan.maps_url) {
+    return artisan.maps_url;
+  }
+
+  if (
+    artisan.latitude !== null &&
+    artisan.latitude !== undefined &&
+    artisan.longitude !== null &&
+    artisan.longitude !== undefined
+  ) {
+    return `https://www.google.com/maps?q=${artisan.latitude},${artisan.longitude}`;
+  }
+
+  return "";
 }
 
 // ==========================================
@@ -142,108 +192,288 @@ const totalArtisans = computed(() => {
 const totalCategories = computed(() => categories.value.length);
 
 // ==========================================
-// ARTISAN DATA
+// ARTISAN DATA MAPPING
 // ==========================================
 
-function mapArtisan(profile, sellerId) {
+function mapArtisan(row) {
   const sellerProducts = allProducts.value.filter(
-    (product) => product.seller_id === sellerId,
+    (product) => product.seller_id === row.seller_id,
   );
 
-  const firstProduct = sellerProducts[0];
+  const firstProduct = sellerProducts[0] || null;
 
-  const storeName =
-    profile?.store_name ||
-    profile?.shop_name ||
-    profile?.business_name ||
-    profile?.name ||
-    "Pengrajin Lokal";
+  // Pastikan recent_reviews selalu berbentuk array.
+  let recentReviews = row.recent_reviews || [];
 
-  const city = profile?.city || profile?.regency || "";
-  const province = profile?.province || "";
+  if (typeof recentReviews === "string") {
+    try {
+      recentReviews = JSON.parse(recentReviews);
+    } catch {
+      recentReviews = [];
+    }
+  }
+
+  if (!Array.isArray(recentReviews)) {
+    recentReviews = [];
+  }
 
   return {
-    id: sellerId,
-    name: storeName,
-    location: [city, province].filter(Boolean).join(", ") || "Indonesia",
+    id: row.seller_id,
+
+    name: row.store_name || "Pengrajin Lokal",
+
+    category: row.category || "Kerajinan Lokal",
+
+    location:
+      [row.district, row.city, row.province].filter(Boolean).join(", ") ||
+      "Lokasi belum ditambahkan",
+
     description:
-      profile?.description ||
-      profile?.store_description ||
+      row.description ||
       "Menghadirkan karya unik dan berkualitas dari pengrajin lokal.",
-    image:
-      profile?.logo_url ||
-      profile?.store_logo ||
-      profile?.avatar_url ||
-      getProductImage(firstProduct),
+
+    image: row.banner_url || row.logo_url || getProductImage(firstProduct),
+
+    logo: row.logo_url || "",
+
+    latitude: row.latitude,
+    longitude: row.longitude,
+    maps_url: row.maps_url,
+
+    averageRating: Number(row.average_rating || 0),
+
+    reviewCount: Number(row.review_count || 0),
+
+    reviews: recentReviews.map((review) => ({
+      rating: Number(review.rating || 0),
+      reviewText: review.review_text || "",
+      productName: review.product_name || "Produk pengrajin",
+      createdAt: review.created_at || null,
+      reviewer: review.reviewer_label || "Pembeli terverifikasi",
+    })),
+
+    featuredProduct: firstProduct,
   };
 }
+
+// ==========================================
+// CACHE ARTISANS
+// ==========================================
+
+async function saveArtisanCache(data) {
+  try {
+    // Ubah data menjadi objek JavaScript biasa.
+    // Ini mencegah DataCloneError pada IndexedDB.
+    const plainArtisans = JSON.parse(JSON.stringify(toRaw(data)));
+
+    await offlineDB.publicProductCache.put({
+      key: "home-artisans",
+      artisans: plainArtisans,
+      updatedAt: new Date().toISOString(),
+    });
+
+    console.log("Cache pengrajin berhasil disimpan.");
+  } catch (cacheError) {
+    // Kegagalan cache tidak boleh menggagalkan data online.
+    console.warn("Gagal menyimpan cache pengrajin:", cacheError);
+  }
+}
+
+async function loadArtisanCache() {
+  try {
+    const cached = await offlineDB.publicProductCache.get("home-artisans");
+
+    if (!cached?.artisans || !Array.isArray(cached.artisans)) {
+      return false;
+    }
+
+    artisans.value = cached.artisans;
+
+    if (activeArtisanIndex.value >= artisans.value.length) {
+      activeArtisanIndex.value = 0;
+    }
+
+    console.log("Data pengrajin berhasil dimuat dari cache.");
+
+    return true;
+  } catch (cacheError) {
+    console.error("Gagal membaca cache pengrajin:", cacheError);
+
+    return false;
+  }
+}
+
+// ==========================================
+// FETCH ARTISANS FROM SUPABASE
+// ==========================================
 
 async function fetchHomeArtisans() {
   loadingArtisans.value = true;
 
-  const sellerIds = [
-    ...new Set(
-      allProducts.value.map((product) => product.seller_id).filter(Boolean),
-    ),
-  ];
-
-  if (!sellerIds.length) {
-    artisans.value = [];
-    loadingArtisans.value = false;
-    return;
-  }
-
   try {
-    // Mengambil profil pengrajin yang memiliki produk terpublikasi.
-    const { data, error } = await supabase
-      .from("seller_profiles")
-      .select("*")
-      .in("id", sellerIds);
+    console.log("Mengambil data pengrajin dari Supabase...");
 
-    if (error) throw error;
+    const { data, error } = await supabase.rpc("get_public_artisan_showcase");
 
-    const profiles = data || [];
+    if (error) {
+      throw error;
+    }
 
-    artisans.value = sellerIds.slice(0, 2).map((sellerId) => {
-      const profile = profiles.find(
-        (item) => item.id === sellerId || item.user_id === sellerId,
-      );
+    const rows = Array.isArray(data) ? data : [];
 
-      return mapArtisan(profile, sellerId);
-    });
+    console.log("ARTISAN RPC DATA:", rows);
 
-    // Simpan hasil pengrajin ke IndexedDB.
-    await offlineDB.publicProductCache.put({
-      key: "home-artisans",
-      artisans: artisans.value,
-      updatedAt: new Date().toISOString(),
-    });
+    // Jangan hilangkan data pengrajin hanya karena
+    // produk belum berhasil dimuat.
+    const sellerIds = new Set(
+      allProducts.value.map((product) => product.seller_id).filter(Boolean),
+    );
+
+    const filteredArtisans = sellerIds.size
+      ? rows.filter((row) => sellerIds.has(row.seller_id))
+      : rows;
+
+    // Mapping data RPC ke struktur yang digunakan template.
+    artisans.value = filteredArtisans.map(mapArtisan);
+
+    if (activeArtisanIndex.value >= artisans.value.length) {
+      activeArtisanIndex.value = 0;
+    }
+
+    console.log("ARTISAN YANG DITAMPILKAN:", artisans.value);
+
+    // Simpan cache secara terpisah.
+    // Jika gagal, data online tetap ditampilkan.
+    await saveArtisanCache(artisans.value);
   } catch (error) {
-    console.warn("Gagal mengambil profil pengrajin:", error);
+    console.error("GAGAL MENGAMBIL DATA PENGRAJIN:", error);
 
-    // Jika offline, gunakan cache pengrajin sebelumnya.
-    try {
-      const cached = await offlineDB.publicProductCache.get("home-artisans");
+    console.error("DETAIL ERROR:", {
+      message: error?.message,
+      details: error?.details,
+      hint: error?.hint,
+      code: error?.code,
+      stack: error?.stack,
+    });
 
-      if (cached?.artisans?.length) {
-        artisans.value = cached.artisans.filter((artisan) =>
-          sellerIds.includes(artisan.id),
-        );
-      } else {
-        // Tetap tampilkan informasi pengrajin dari produk yang tersedia.
-        artisans.value = sellerIds
-          .slice(0, 2)
-          .map((sellerId) => mapArtisan(null, sellerId));
-      }
-    } catch (cacheError) {
-      console.error("Gagal membaca cache pengrajin:", cacheError);
+    // Gunakan cache jika RPC gagal atau perangkat offline.
+    const cacheLoaded = await loadArtisanCache();
 
-      artisans.value = sellerIds
-        .slice(0, 2)
-        .map((sellerId) => mapArtisan(null, sellerId));
+    if (!cacheLoaded) {
+      artisans.value = [];
     }
   } finally {
     loadingArtisans.value = false;
+  }
+}
+
+// ==========================================
+// ARTISAN CAROUSEL
+// ==========================================
+
+const activeArtisan = computed(() => {
+  return artisans.value[activeArtisanIndex.value] || null;
+});
+
+function stopArtisanTimer() {
+  if (artisanTimer !== null) {
+    clearTimeout(artisanTimer);
+    artisanTimer = null;
+  }
+}
+
+function startArtisanTimer() {
+  stopArtisanTimer();
+
+  if (
+    artisans.value.length <= 1 ||
+    isArtisanHovered.value ||
+    prefersReducedMotion
+  ) {
+    return;
+  }
+
+  // Mulai ulang animasi progress dari awal.
+  artisanProgressKey.value++;
+
+  artisanTimer = setTimeout(() => {
+    activeArtisanIndex.value =
+      (activeArtisanIndex.value + 1) % artisans.value.length;
+
+    startArtisanTimer();
+  }, ARTISAN_INTERVAL);
+}
+
+function nextArtisan(resetTimer = true) {
+  if (artisans.value.length <= 1) return;
+
+  activeArtisanIndex.value =
+    (activeArtisanIndex.value + 1) % artisans.value.length;
+
+  if (resetTimer) {
+    startArtisanTimer();
+  }
+}
+
+function previousArtisan() {
+  if (artisans.value.length <= 1) return;
+
+  activeArtisanIndex.value =
+    (activeArtisanIndex.value - 1 + artisans.value.length) %
+    artisans.value.length;
+
+  startArtisanTimer();
+}
+
+function selectArtisan(index) {
+  if (index < 0 || index >= artisans.value.length) return;
+
+  activeArtisanIndex.value = index;
+  startArtisanTimer();
+}
+
+function pauseArtisanTimer() {
+  isArtisanHovered.value = true;
+  stopArtisanTimer();
+}
+
+function resumeArtisanTimer() {
+  isArtisanHovered.value = false;
+  startArtisanTimer();
+}
+
+// ==========================================
+// MOBILE SWIPE
+// ==========================================
+
+function handleTouchStart(event) {
+  touchStartX = event.changedTouches[0].screenX;
+}
+
+function handleTouchEnd(event) {
+  const touchEndX = event.changedTouches[0].screenX;
+  const difference = touchStartX - touchEndX;
+
+  if (Math.abs(difference) < 45) return;
+
+  if (difference > 0) {
+    nextArtisan();
+  } else {
+    previousArtisan();
+  }
+}
+
+// ==========================================
+// REDUCED MOTION
+// ==========================================
+
+function handleMotionChange(event) {
+  prefersReducedMotion = event.matches;
+
+  if (prefersReducedMotion) {
+    stopArtisanTimer();
+  } else {
+    startArtisanTimer();
   }
 }
 
@@ -256,7 +486,7 @@ async function loadHomeData() {
   homeError.value = "";
 
   try {
-    // Memanggil store katalog yang sudah memiliki cache offline.
+    // Ambil produk dari store.
     await productStore.fetchPublicProducts();
 
     const products = productStore.publicProducts || [];
@@ -269,6 +499,7 @@ async function loadHomeData() {
           new Date(a.created_at || 0).getTime(),
       );
 
+    // Ambil pengrajin beserta ulasan.
     await fetchHomeArtisans();
 
     if (!allProducts.value.length) {
@@ -278,13 +509,47 @@ async function loadHomeData() {
     console.error("Gagal memuat Home:", error);
 
     homeError.value = "Tidak dapat memuat data beranda. Silakan coba kembali.";
+
+    // Tetap coba ambil data pengrajin.
+    await fetchHomeArtisans();
   } finally {
     loading.value = false;
   }
 }
 
-onMounted(() => {
-  loadHomeData();
+// ==========================================
+// LIFECYCLE
+// ==========================================
+
+onMounted(async () => {
+  // Periksa preferensi animasi perangkat.
+  if (typeof window !== "undefined" && window.matchMedia) {
+    motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+    prefersReducedMotion = motionQuery.matches;
+
+    if (motionQuery.addEventListener) {
+      motionQuery.addEventListener("change", handleMotionChange);
+    } else {
+      motionQuery.addListener(handleMotionChange);
+    }
+  }
+
+  await loadHomeData();
+
+  startArtisanTimer();
+});
+
+onUnmounted(() => {
+  stopArtisanTimer();
+
+  if (motionQuery) {
+    if (motionQuery.removeEventListener) {
+      motionQuery.removeEventListener("change", handleMotionChange);
+    } else {
+      motionQuery.removeListener(handleMotionChange);
+    }
+  }
 });
 </script>
 
@@ -567,7 +832,7 @@ onMounted(() => {
     </section>
 
     <!-- ======================================
-         ARTISAN STORIES
+         ARTISAN STORIES CAROUSEL
     ======================================= -->
 
     <section id="cerita-pengrajin" class="section artisan-section">
@@ -591,40 +856,259 @@ onMounted(() => {
           Memuat informasi pengrajin...
         </div>
 
-        <div v-else-if="artisans.length" class="artisan-grid">
-          <article
-            v-for="artisan in artisans"
-            :key="artisan.id"
-            class="artisan-card"
-          >
-            <div class="artisan-image">
+        <div
+          v-else-if="activeArtisan"
+          class="artisan-carousel"
+          :class="{ 'is-paused': isArtisanHovered }"
+          @mouseenter="pauseArtisanTimer"
+          @mouseleave="resumeArtisanTimer"
+          @touchstart.passive="handleTouchStart"
+          @touchend.passive="handleTouchEnd"
+        >
+          <!-- MAIN ARTISAN CARD -->
+
+          <article class="artisan-feature-card">
+            <!-- IMAGE -->
+
+            <div class="artisan-feature-image">
               <img
-                v-if="artisan.image"
-                :src="artisan.image"
-                :alt="artisan.name"
+                v-if="activeArtisan.image"
+                :key="activeArtisan.image"
+                :src="activeArtisan.image"
+                :alt="activeArtisan.name"
                 loading="lazy"
               />
 
               <div v-else class="artisan-image-placeholder">
-                <HeartHandshake :size="34" />
+                <HeartHandshake :size="42" />
+              </div>
+
+              <div class="artisan-image-overlay"></div>
+
+              <div class="artisan-image-label">
+                <Sparkles :size="15" />
+                Pengrajin Lokal
               </div>
             </div>
 
-            <div class="artisan-content">
-              <span class="artisan-location">
-                {{ artisan.location }}
-              </span>
+            <!-- CONTENT -->
 
-              <h3>{{ artisan.name }}</h3>
+            <div class="artisan-feature-content">
+              <div class="artisan-category">
+                {{ activeArtisan.category }}
+              </div>
 
-              <p>{{ artisan.description }}</p>
+              <h3>{{ activeArtisan.name }}</h3>
 
-              <RouterLink to="/katalog" class="artisan-link">
-                Jelajahi Karyanya
-                <ArrowRight :size="16" />
+              <p class="artisan-description">
+                {{ activeArtisan.description }}
+              </p>
+
+              <!-- LOCATION -->
+
+              <div class="artisan-location-detail">
+                <MapPin :size="17" />
+
+                <span>{{ activeArtisan.location }}</span>
+              </div>
+
+              <a
+                v-if="getMapsUrl(activeArtisan)"
+                :href="getMapsUrl(activeArtisan)"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="artisan-map-link"
+              >
+                Lihat Lokasi Pengrajin
+                <ExternalLink :size="14" />
+              </a>
+
+              <div v-else class="artisan-map-unavailable">
+                Lokasi peta belum ditambahkan
+              </div>
+
+              <!-- RATING -->
+
+              <div class="artisan-rating-box">
+                <div class="artisan-rating-score">
+                  <strong>
+                    {{ activeArtisan.averageRating.toFixed(1) }}
+                  </strong>
+
+                  <div class="artisan-rating-stars">
+                    <Star
+                      v-for="star in 5"
+                      :key="star"
+                      :size="13"
+                      :fill="
+                        star <= Math.round(activeArtisan.averageRating)
+                          ? 'currentColor'
+                          : 'none'
+                      "
+                    />
+                  </div>
+                </div>
+
+                <div class="artisan-rating-divider"></div>
+
+                <div class="artisan-rating-total">
+                  <strong>
+                    {{ activeArtisan.reviewCount }}
+                  </strong>
+
+                  <span>Ulasan pelanggan</span>
+                </div>
+              </div>
+
+              <!-- RECENT REVIEW -->
+
+              <div class="artisan-review-section">
+                <div class="artisan-review-heading">
+                  <span>ULASAN PELANGGAN</span>
+                </div>
+
+                <div
+                  v-if="activeArtisan.reviews.length"
+                  class="artisan-review-list"
+                >
+                  <div
+                    v-for="(review, index) in activeArtisan.reviews"
+                    :key="`${activeArtisan.id}-${index}`"
+                    class="artisan-review-item"
+                  >
+                    <div class="artisan-review-top">
+                      <strong>{{ review.reviewer }}</strong>
+
+                      <div class="review-stars">
+                        <Star
+                          v-for="star in 5"
+                          :key="star"
+                          :size="11"
+                          :fill="
+                            star <= review.rating ? 'currentColor' : 'none'
+                          "
+                        />
+                      </div>
+                    </div>
+
+                    <p v-if="review.reviewText">"{{ review.reviewText }}"</p>
+
+                    <div class="artisan-review-meta">
+                      <span>{{ review.productName }}</span>
+
+                      <span>
+                        {{ formatReviewDate(review.createdAt) }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-else class="artisan-no-review">
+                  <Star :size="18" />
+
+                  <div>
+                    <strong>Belum ada ulasan</strong>
+                    <span>
+                      Ulasan pelanggan akan muncul setelah pembelian selesai dan
+                      pelanggan memberikan penilaian.
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- FEATURED PRODUCT -->
+
+              <div
+                v-if="activeArtisan.featuredProduct"
+                class="artisan-featured-product"
+              >
+                <div class="artisan-featured-product-image">
+                  <img
+                    v-if="getProductImage(activeArtisan.featuredProduct)"
+                    :src="getProductImage(activeArtisan.featuredProduct)"
+                    :alt="activeArtisan.featuredProduct.name"
+                    loading="lazy"
+                  />
+
+                  <div v-else class="product-placeholder">
+                    <Sparkles :size="18" />
+                  </div>
+                </div>
+
+                <div class="artisan-featured-product-info">
+                  <span>KARYA PENGRAJIN</span>
+
+                  <strong>
+                    {{ activeArtisan.featuredProduct.name }}
+                  </strong>
+
+                  <RouterLink
+                    :to="`/produk/${activeArtisan.featuredProduct.id}`"
+                  >
+                    Lihat Produk
+                    <ArrowRight :size="13" />
+                  </RouterLink>
+                </div>
+              </div>
+
+              <RouterLink to="/katalog" class="artisan-main-link">
+                Jelajahi Karya Pengrajin
+                <ArrowRight :size="17" />
               </RouterLink>
             </div>
           </article>
+
+          <!-- CAROUSEL CONTROLS -->
+
+          <div v-if="artisans.length > 1" class="artisan-carousel-controls">
+            <div class="artisan-carousel-pagination">
+              <button
+                v-for="(artisan, index) in artisans"
+                :key="artisan.id"
+                type="button"
+                class="artisan-progress-button"
+                :class="{
+                  active: index === activeArtisanIndex,
+                }"
+                :aria-label="`Tampilkan pengrajin ${artisan.name}`"
+                @click="selectArtisan(index)"
+              >
+                <span class="artisan-progress-track">
+                  <span
+                    v-if="index === activeArtisanIndex"
+                    class="artisan-progress-fill"
+                    :key="`progress-${activeArtisanIndex}-${artisanProgressKey}`"
+                  ></span>
+                </span>
+              </button>
+            </div>
+
+            <div class="artisan-carousel-navigation">
+              <span class="artisan-slide-number">
+                {{ String(activeArtisanIndex + 1).padStart(2, "0") }}
+                /
+                {{ String(artisans.length).padStart(2, "0") }}
+              </span>
+
+              <button
+                type="button"
+                class="artisan-nav-button"
+                aria-label="Pengrajin sebelumnya"
+                @click="previousArtisan"
+              >
+                <ChevronLeft :size="19" />
+              </button>
+
+              <button
+                type="button"
+                class="artisan-nav-button"
+                aria-label="Pengrajin berikutnya"
+                @click="nextArtisan"
+              >
+                <ChevronRight :size="19" />
+              </button>
+            </div>
+          </div>
         </div>
 
         <div v-else class="home-empty-state">
@@ -1311,93 +1795,479 @@ onMounted(() => {
 }
 
 /* ==========================================
-   ARTISAN STORIES
+   ARTISAN CAROUSEL
 ========================================== */
 
 .artisan-section {
   background: #fffdf9;
 }
 
-.artisan-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 24px;
+.artisan-carousel {
+  width: 100%;
 }
 
-.artisan-card {
+.artisan-feature-card {
   display: grid;
-  grid-template-columns: 0.95fr 1fr;
-  min-height: 260px;
+  grid-template-columns: 0.9fr 1.1fr;
+  min-height: 570px;
   overflow: hidden;
   background: #faf6ef;
   border: 1px solid #eee4d8;
-  border-radius: 15px;
-  transition: 0.25s ease;
+  border-radius: 18px;
+  box-shadow: 0 12px 38px rgba(57, 37, 25, 0.06);
 }
 
-.artisan-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 15px 35px rgba(57, 37, 25, 0.09);
-}
-
-.artisan-image {
-  min-height: 260px;
+.artisan-feature-image {
+  position: relative;
+  min-height: 570px;
   overflow: hidden;
+  background: #e9ddce;
 }
 
-.artisan-image img {
+.artisan-feature-image > img {
   width: 100%;
   height: 100%;
+  min-height: 570px;
   object-fit: cover;
-  transition: transform 0.4s ease;
+  animation: artisanImageReveal 0.5s ease both;
 }
 
-.artisan-card:hover .artisan-image img {
-  transform: scale(1.06);
+@keyframes artisanImageReveal {
+  from {
+    opacity: 0.55;
+    transform: scale(1.035);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
-.artisan-content {
+.artisan-image-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(0deg, rgba(38, 25, 17, 0.48), transparent 45%);
+  pointer-events: none;
+}
+
+.artisan-image-label {
+  position: absolute;
+  left: 24px;
+  bottom: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 15px;
+  color: white;
+  background: rgba(45, 35, 26, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 30px;
+  font-size: 11px;
+  font-weight: 700;
+  backdrop-filter: blur(8px);
+}
+
+.artisan-feature-content {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  justify-content: center;
-  padding: 25px;
+  padding: 35px 38px;
 }
 
-.artisan-location {
-  color: var(--terracotta);
+.artisan-category {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 12px;
+  color: #a64d27;
+  background: #f2e4d5;
+  border-radius: 30px;
   font-size: 10px;
   font-weight: 800;
-  letter-spacing: 1px;
+  letter-spacing: 0.8px;
   text-transform: uppercase;
 }
 
-.artisan-content h3 {
-  margin: 12px 0;
-  color: var(--brown);
+.artisan-feature-content > h3 {
+  margin: 17px 0 10px;
+  color: #493328;
   font-family: Georgia, serif;
-  font-size: 23px;
+  font-size: clamp(27px, 3vw, 36px);
+  font-weight: 600;
+  line-height: 1.15;
 }
 
-.artisan-content p {
-  margin: 0 0 18px;
-  color: var(--muted);
+.artisan-description {
+  margin: 0 0 17px;
+  color: #89796d;
   font-size: 12px;
   line-height: 1.8;
 }
 
-.artisan-link {
+.artisan-location-detail {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  color: #6f5c4e;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.artisan-location-detail svg {
+  flex-shrink: 0;
+  color: #a64d27;
+}
+
+.artisan-map-link {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  color: var(--terracotta);
+  margin: 9px 0 18px 26px;
+  color: #a64d27;
   font-size: 11px;
   font-weight: 700;
   text-decoration: none;
 }
 
-.artisan-link:hover {
+.artisan-map-link:hover {
+  text-decoration: underline;
+}
+
+.artisan-map-unavailable {
+  margin: 9px 0 18px 26px;
+  color: #a49689;
+  font-size: 10px;
+}
+
+/* RATING */
+
+.artisan-rating-box {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  width: 100%;
+  padding: 15px 18px;
+  background: #f3eade;
+  border: 1px solid #eadccc;
+  border-radius: 11px;
+}
+
+.artisan-rating-score {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.artisan-rating-score > strong {
+  color: #493328;
+  font-family: Georgia, serif;
+  font-size: 27px;
+  line-height: 1;
+}
+
+.artisan-rating-stars,
+.review-stars {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  color: #c28b42;
+}
+
+.artisan-rating-divider {
+  width: 1px;
+  height: 37px;
+  background: #ddcbbb;
+}
+
+.artisan-rating-total {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.artisan-rating-total strong {
+  color: #493328;
+  font-size: 17px;
+}
+
+.artisan-rating-total span {
+  color: #89796d;
+  font-size: 10px;
+}
+
+/* REVIEWS */
+
+.artisan-review-section {
+  width: 100%;
+  margin-top: 21px;
+}
+
+.artisan-review-heading {
+  margin-bottom: 12px;
+  color: #a64d27;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.3px;
+}
+
+.artisan-review-list {
+  display: flex;
+  flex-direction: column;
   gap: 11px;
+}
+
+.artisan-review-item {
+  padding: 12px 14px;
+  background: #fffdf9;
+  border: 1px solid #eee4d8;
+  border-radius: 10px;
+}
+
+.artisan-review-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.artisan-review-top > strong {
+  color: #594333;
+  font-size: 10px;
+}
+
+.artisan-review-item > p {
+  margin: 8px 0;
+  color: #79695d;
+  font-size: 11px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.artisan-review-meta {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 7px;
+  color: #a49689;
+  font-size: 9px;
+}
+
+.artisan-no-review {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 15px;
+  color: #b18a54;
+  background: #fffaf1;
+  border: 1px dashed #e5d2b8;
+  border-radius: 10px;
+}
+
+.artisan-no-review > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.artisan-no-review strong {
+  color: #6e5137;
+  font-size: 11px;
+}
+
+.artisan-no-review span {
+  color: #988779;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+/* FEATURED ARTISAN PRODUCT */
+
+.artisan-featured-product {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin-top: 17px;
+  padding: 10px;
+  background: #fffdf9;
+  border: 1px solid #eee4d8;
+  border-radius: 11px;
+}
+
+.artisan-featured-product-image {
+  flex-shrink: 0;
+  width: 58px;
+  height: 58px;
+  overflow: hidden;
+  background: #f0e5d6;
+  border-radius: 8px;
+}
+
+.artisan-featured-product-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.product-placeholder {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  color: #a64d27;
+}
+
+.artisan-featured-product-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  gap: 4px;
+}
+
+.artisan-featured-product-info > span {
+  color: #a64d27;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 1px;
+}
+
+.artisan-featured-product-info > strong {
+  max-width: 100%;
+  overflow: hidden;
+  color: #493328;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artisan-featured-product-info > a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #a64d27;
+  font-size: 10px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+/* MAIN LINK */
+
+.artisan-main-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 43px;
+  margin-top: 17px;
+  padding: 0 17px;
+  color: white;
+  background: #a64d27;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-decoration: none;
+  transition: 0.2s ease;
+}
+
+.artisan-main-link:hover {
+  gap: 14px;
+  background: #873b1b;
+}
+
+/* CAROUSEL PAGINATION */
+
+.artisan-carousel-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 23px;
+}
+
+.artisan-carousel-pagination {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 1;
+}
+
+.artisan-progress-button {
+  width: 75px;
+  height: 22px;
+  padding: 8px 0;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.artisan-progress-track {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 4px;
+  overflow: hidden;
+  background: #e9ded2;
+  border-radius: 20px;
+}
+
+.artisan-progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 100%;
+  background: #a64d27;
+  border-radius: 20px;
+  transform-origin: left;
+  animation: artisanProgress 3s linear forwards;
+}
+
+.artisan-carousel.is-paused .artisan-progress-fill {
+  animation-play-state: paused;
+}
+
+@keyframes artisanProgress {
+  from {
+    transform: scaleX(0);
+  }
+
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* CAROUSEL NAVIGATION */
+
+.artisan-carousel-navigation {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.artisan-slide-number {
+  margin-right: 8px;
+  color: #89796d;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.artisan-nav-button {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  color: #8a563c;
+  background: #f7eee4;
+  border: 1px solid #e8d8c7;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: 0.2s ease;
+}
+
+.artisan-nav-button:hover {
+  color: white;
+  background: #a64d27;
+  border-color: #a64d27;
 }
 
 /* ==========================================
@@ -1502,7 +2372,7 @@ onMounted(() => {
 }
 
 .artisan-image-placeholder {
-  min-height: 260px;
+  min-height: 570px;
 }
 
 .home-empty-state,
@@ -1541,6 +2411,14 @@ onMounted(() => {
 
   .benefit-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .artisan-feature-card {
+    grid-template-columns: 0.8fr 1.2fr;
+  }
+
+  .artisan-feature-content {
+    padding: 28px;
   }
 }
 
@@ -1703,21 +2581,64 @@ onMounted(() => {
     padding: 23px 13px;
   }
 
-  .artisan-grid {
+  /* ARTISAN MOBILE */
+
+  .artisan-feature-card {
     grid-template-columns: 1fr;
   }
 
-  .artisan-card {
-    grid-template-columns: 1fr;
+  .artisan-feature-image {
+    min-height: 260px;
+    height: 260px;
   }
 
-  .artisan-image {
-    height: 220px;
-    min-height: 220px;
+  .artisan-feature-image > img {
+    min-height: 260px;
+    height: 260px;
   }
 
-  .artisan-content {
-    padding: 23px;
+  .artisan-image-placeholder {
+    min-height: 260px;
+  }
+
+  .artisan-feature-content {
+    padding: 24px 20px;
+  }
+
+  .artisan-feature-content > h3 {
+    font-size: 28px;
+  }
+
+  .artisan-rating-box {
+    gap: 15px;
+    padding: 13px;
+  }
+
+  .artisan-carousel-controls {
+    align-items: center;
+    gap: 10px;
+  }
+
+  .artisan-carousel-pagination {
+    gap: 5px;
+  }
+
+  .artisan-progress-button {
+    width: 34px;
+  }
+
+  .artisan-carousel-navigation {
+    gap: 6px;
+  }
+
+  .artisan-slide-number {
+    margin-right: 2px;
+    font-size: 9px;
+  }
+
+  .artisan-nav-button {
+    width: 33px;
+    height: 33px;
   }
 
   .cta-section {
@@ -1765,6 +2686,14 @@ onMounted(() => {
   .benefit-grid {
     grid-template-columns: 1fr;
   }
+
+  .artisan-feature-content {
+    padding: 20px 15px;
+  }
+
+  .artisan-review-meta {
+    flex-direction: column;
+  }
 }
 
 /* ==========================================
@@ -1775,8 +2704,10 @@ onMounted(() => {
   .home-page *,
   .home-page *::before,
   .home-page *::after {
+    scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }
 </style>
