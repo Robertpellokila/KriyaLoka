@@ -1,15 +1,9 @@
-
 <script setup>
 import { computed } from "vue";
-import {
-  Check,
-  Package,
-  ClipboardCheck,
-  Truck,
-  House,
-} from "lucide-vue-next";
+import { Check, Package, ClipboardCheck, Truck, House } from "lucide-vue-next";
 
 import ShippingTruckAnimation from "./ShippingTruckAnimation.vue";
+import OrderCompletedAnimation from "./OrderCompletedAnimation.vue";
 
 const props = defineProps({
   status: {
@@ -58,10 +52,16 @@ const steps = [
     icon: Truck,
   },
   {
+    key: "delivered",
+    label: "Pesanan telah sampai",
+    description: "Kurir telah mengantarkan pesanan ke tujuan.",
+    icon: House,
+  },
+  {
     key: "completed",
     label: "Pesanan diterima",
-    description: "Pesanan telah sampai di tujuan.",
-    icon: House,
+    description: "Pembeli telah mengonfirmasi penerimaan pesanan.",
+    icon: Check,
   },
 ];
 
@@ -72,7 +72,8 @@ const statusOrder = {
   paid: 0,
   processing: 1,
   shipped: 2,
-  completed: 3,
+  delivered: 3,
+  completed: 4,
   cancelled: -1,
 };
 
@@ -88,8 +89,21 @@ const isShipping = computed(() => {
   return props.status === "shipped";
 });
 
+const isDelivered = computed(() => {
+  return props.status === "delivered";
+});
+
+const isCompleted = computed(() => {
+  return props.status === "completed";
+});
+
+const hasShippingInfo = computed(() => {
+  return ["shipped", "delivered", "completed"].includes(props.status);
+});
+
 const progressWidth = computed(() => {
   if (currentStep.value < 0) return "0%";
+
   return `${(currentStep.value / (steps.length - 1)) * 100}%`;
 });
 
@@ -112,27 +126,27 @@ const formatDate = (date) => {
         <p>Pantau perkembangan pesananmu di sini.</p>
       </div>
 
-      <span
-        v-if="isCancelled"
-        class="status-badge cancelled"
-      >
+      <span v-if="isCancelled" class="status-badge cancelled">
         Pesanan Dibatalkan
       </span>
 
       <span
         v-else
         class="status-badge"
-        :class="isShipping ? 'shipping' : 'normal'"
+        :class="{
+          shipping: isShipping,
+          delivered: isDelivered,
+          completed: isCompleted,
+          normal: !isShipping && !isDelivered && !isCompleted,
+        }"
       >
         {{ steps[currentStep]?.label || "Menunggu proses" }}
       </span>
     </div>
 
-    <div
-      v-if="isCancelled"
-      class="cancelled-message"
-    >
+    <div v-if="isCancelled" class="cancelled-message">
       <Package :size="24" />
+
       <div>
         <strong>Pesanan dibatalkan</strong>
         <p>Pesanan ini tidak melanjutkan proses pengiriman.</p>
@@ -140,11 +154,13 @@ const formatDate = (date) => {
     </div>
 
     <template v-else>
-      <!-- Truck Animation -->
-      <div
-        v-if="isShipping"
-        class="truck-animation-wrapper"
-      >
+      <!-- Animasi Pesanan Selesai -->
+      <div v-if="isCompleted" class="completed-animation-wrapper">
+        <OrderCompletedAnimation />
+      </div>
+
+      <!-- Animasi Truk -->
+      <div v-else-if="isShipping" class="truck-animation-wrapper">
         <ShippingTruckAnimation
           status="shipped"
           :courier-name="courierName"
@@ -152,9 +168,11 @@ const formatDate = (date) => {
         />
       </div>
 
-      <!-- Shipping Information -->
+      <!-- Informasi Pengiriman -->
       <div
-        v-if="isShipping && (courierName || courierService || trackingNumber)"
+        v-if="
+          hasShippingInfo && (courierName || courierService || trackingNumber)
+        "
         class="courier-information"
       >
         <div class="courier-heading">
@@ -182,12 +200,12 @@ const formatDate = (date) => {
         </div>
       </div>
 
-      <!-- Progress Timeline -->
+      <!-- Timeline -->
       <div class="timeline">
         <div class="timeline-track">
           <div
             class="timeline-track-fill"
-            :style="{ width: progressWidth }"
+            :style="{ height: progressWidth }"
           ></div>
         </div>
 
@@ -202,16 +220,9 @@ const formatDate = (date) => {
           }"
         >
           <div class="timeline-icon">
-            <Check
-              v-if="index < currentStep"
-              :size="17"
-            />
+            <Check v-if="index < currentStep" :size="17" />
 
-            <component
-              v-else
-              :is="step.icon"
-              :size="18"
-            />
+            <component v-else :is="step.icon" :size="18" />
           </div>
 
           <div class="timeline-content">
@@ -226,7 +237,7 @@ const formatDate = (date) => {
             </span>
 
             <span
-              v-if="step.key === 'completed' && deliveredAt"
+              v-if="step.key === 'delivered' && deliveredAt"
               class="timeline-date"
             >
               {{ formatDate(deliveredAt) }}
@@ -295,12 +306,19 @@ const formatDate = (date) => {
   color: #a6532c;
 }
 
+.status-badge.delivered,
+.status-badge.completed {
+  background: #eaf2e4;
+  color: #52734b;
+}
+
 .status-badge.cancelled {
   background: #fce8e6;
   color: #b33b32;
 }
 
-.truck-animation-wrapper {
+.truck-animation-wrapper,
+.completed-animation-wrapper {
   margin-bottom: 24px;
 }
 
@@ -374,7 +392,7 @@ const formatDate = (date) => {
   width: 100%;
   background: #719466;
   border-radius: 10px;
-  transition: width 0.4s ease;
+  transition: height 0.4s ease;
 }
 
 .timeline-step {
@@ -415,6 +433,13 @@ const formatDate = (date) => {
   background: #fff0e5;
   color: #a6532c;
   box-shadow: 0 0 0 5px #f9eee7;
+}
+
+.timeline-step.active:last-child .timeline-icon {
+  border-color: #719466;
+  background: #719466;
+  color: white;
+  box-shadow: 0 0 0 5px #eaf2e4;
 }
 
 .timeline-content {
